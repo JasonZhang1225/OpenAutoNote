@@ -1,0 +1,17 @@
+# Windows CPU-only requirements
+# Use this if you do NOT have an NVIDIA GPU
+# This installs CPU-only PyTorch (~200MB instead of ~3GB)
+
+--index-url https://download.pytorch.org/whl/cpu
+
+# Core Application
+nicegui
+yt-dlp
+openai
+opencv-python-headless
+urllib3<2.0
+
+# AI / Transcription (CPU-only PyTorch)
+torch
+torchaudio
+faster-whisper

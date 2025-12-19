@@ -1,4 +1,4 @@
-streamlit
+nicegui
 yt-dlp
 mlx-whisper
 faster-whisper

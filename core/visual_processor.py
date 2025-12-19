@@ -83,9 +83,11 @@ def process_video_for_vision(video_path: str, interval: int = 15, output_dir: st
                     "base64": base64_str
                 })
                 
-                # Optionally save frame to disk for debugging
+                # Optionally save frame to disk for debugging/assets
                 if output_dir:
-                    frame_path = os.path.join(output_dir, "frames", f"frame_{int(current_time):04d}.jpg")
+                    # UPDATED: Save directly to output_dir without forcing 'frames' subdir,
+                    # because caller (main.py) now manages 'assets/' folder.
+                    frame_path = os.path.join(output_dir, f"frame_{int(current_time):04d}.jpg")
                     os.makedirs(os.path.dirname(frame_path), exist_ok=True)
                     cv2.imwrite(frame_path, frame)
             
