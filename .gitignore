@@ -1,0 +1,16 @@
+# Virtual Environment
+oan/
+venv/
+env/
+.env
+
+# Temporary Files
+temp/
+*.pyc
+__pycache__/
+
+# System
+.DS_Store
+
+# User Data
+cookies.txt
