@@ -52,6 +52,11 @@ jobs:
           mv dist/api-server ../src-tauri/bin/api-server-aarch64-apple-darwin
           cd ..
 
+      - name: Prepare Placeholder Assets
+        run: |
+          mkdir -p dist-python
+          echo '<html><body><h1>Connecting...</h1><script>window.location.href="http://localhost:8964"</script></body></html>' > dist-python/index.html
+
       - name: Build Tauri
         run: |
           npm install
@@ -121,6 +126,12 @@ jobs:
           pyinstaller -F main.py --name api-server
           mv dist/api-server.exe ../src-tauri/bin/api-server-x86_64-pc-windows-msvc.exe
           cd ..
+
+      - name: Prepare Placeholder Assets
+        shell: bash
+        run: |
+          mkdir -p dist-python
+          echo '<html><body><h1>Connecting...</h1><script>window.location.href="http://localhost:8964"</script></body></html>' > dist-python/index.html
 
       - name: Build Tauri
         shell: bash
