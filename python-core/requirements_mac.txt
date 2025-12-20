@@ -1,0 +1,6 @@
+nicegui
+yt-dlp
+openai
+pyinstaller
+mlx-whisper
+psutil

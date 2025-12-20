@@ -1,18 +1,26 @@
-# Virtual Environment
-oan/
-venv/
-env/
-.env
+# Node
+node_modules/
 
-# Temporary Files
-generate/
-*.oan
+# Python Core (关键修复：加上路径)
+python-core/oan2/
+python-core/venv/
+python-core/build/
+python-core/dist/
+python-core/*.spec
 __pycache__/
 
-# System
-.DS_Store
+# Tauri/Rust (关键修复：这是那4000个文件的源头)
+src-tauri/target/
 
-# User Data
-cookies.txt
-user_config.json
-user_history.json
+# Binaries
+src-tauri/bin/api-server-*
+src-tauri/bin/ffmpeg-*
+src-tauri/bin/aria2c-*
+
+# System & User Data
+.DS_Store
+python-core/user_config.json
+python-core/user_history.json
+python-core/cookies.txt
+generate/
+*.oan

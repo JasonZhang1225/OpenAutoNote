@@ -1,0 +1,24 @@
+{
+    "productName": "OpenAutoNote",
+    "version": "1.0.0",
+    "identifier": "com.openautonote.app",
+    "build": {
+        "beforeDevCommand": "cd python-core && ./oan2/bin/python main.py",
+        "beforeBuildCommand": "",
+        "devUrl": "http://localhost:8964",
+        "frontendDist": "../dist-python"
+    },
+    "bundle": {
+        "active": true,
+        "targets": "all",
+        "externalBin": [
+            "bin/api-server"
+        ]
+    },
+    "app": {
+        "withGlobalTauri": true,
+        "security": {
+            "csp": null
+        }
+    }
+}

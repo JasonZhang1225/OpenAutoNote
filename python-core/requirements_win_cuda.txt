@@ -1,0 +1,10 @@
+nicegui
+yt-dlp
+openai
+pyinstaller
+faster-whisper
+psutil
+
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch
+torchaudio

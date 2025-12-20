@@ -1,0 +1,11 @@
+{
+    "name": "open-auto-note",
+    "version": "1.0.0",
+    "description": "OpenAutoNote Tauri wrapper",
+    "scripts": {
+        "tauri": "tauri"
+    },
+    "devDependencies": {
+        "@tauri-apps/cli": "^2.0.0"
+    }
+}

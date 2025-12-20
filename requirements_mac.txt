@@ -1,7 +1,0 @@
-nicegui
-yt-dlp
-mlx-whisper
-faster-whisper
-openai
-opencv-python-headless
-urllib3<2.0
