@@ -40,9 +40,10 @@ jobs:
           mv ffmpeg src-tauri/bin/ffmpeg-aarch64-apple-darwin
           chmod +x src-tauri/bin/ffmpeg-aarch64-apple-darwin
           
-          # Aria2 (Using brew version as static builds are scarce, or could use a known release)
-          # Copying from brew environment
-          cp $(which aria2c) src-tauri/bin/aria2c-aarch64-apple-darwin
+          # Aria2 (Using known static build for ARM64)
+          curl -L -o aria2c https://github.com/davidteren/lpx_links/raw/main/vendor/aria2/bin/aria2c
+          mv aria2c src-tauri/bin/aria2c-aarch64-apple-darwin
+          chmod +x src-tauri/bin/aria2c-aarch64-apple-darwin
 
       - name: Build Python Sidecar
         run: |
@@ -90,15 +91,19 @@ jobs:
         run: |
           mkdir -p src-tauri/bin
           
-          # FFmpeg (Gyan.dev)
+          # FFmpeg
           curl -L -o ffmpeg.zip https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip
           unzip ffmpeg.zip
-          mv ffmpeg-*-essentials/bin/ffmpeg.exe src-tauri/bin/ffmpeg-x86_64-pc-windows-msvc.exe
+          # 使用 find 命令定位 ffmpeg.exe，无视文件夹具体名称
+          FFMPEG_PATH=$(find . -name "ffmpeg.exe" | head -n 1)
+          mv "$FFMPEG_PATH" src-tauri/bin/ffmpeg-x86_64-pc-windows-msvc.exe
           
           # Aria2
           curl -L -o aria2.zip https://github.com/aria2/aria2/releases/download/release-1.36.0/aria2-1.36.0-win-64bit-build1.zip
           unzip aria2.zip
-          mv aria2-*-win-64bit-build1/aria2c.exe src-tauri/bin/aria2c-x86_64-pc-windows-msvc.exe
+          # 同样使用 find 命令定位 aria2c.exe
+          ARIA2_PATH=$(find . -name "aria2c.exe" | head -n 1)
+          mv "$ARIA2_PATH" src-tauri/bin/aria2c-x86_64-pc-windows-msvc.exe
 
       - name: Install Dependencies (Variant)
         shell: bash
