@@ -167,13 +167,8 @@ jobs:
           VERSION=${TAURI_APP_VERSION:-1.0.0}
           python -c "import json, pathlib, os; p=pathlib.Path('src-tauri/tauri.conf.json'); d=json.loads(p.read_text()); d['version']=os.environ.get('TAURI_APP_VERSION', d.get('version','1.0.0')); p.write_text(json.dumps(d, indent=4))"
           npm install
-          if [ "${{ matrix.variant }}" == "cuda" ]; then
-            # CUDA build: skip NSIS to avoid mmap failures, produce portable app bundle
-            npm run tauri build -- --bundles app
-          else
-            # CPU build: keep NSIS installer
-            npm run tauri build -- --bundles nsis
-          fi
+          # NSIS is the supported Windows bundle; compression is disabled in tauri.conf for large CUDA sidecar
+          npm run tauri build -- --bundles nsis
         env:
           TAURI_APP_VERSION: ${{ env.TAURI_APP_VERSION }}
           TAURI_BUNDLE_VERSION: ${{ env.TAURI_BUNDLE_VERSION }}
