@@ -1,6 +1,18 @@
 import re
 from typing import List, Dict, Any
 
+
+def clean_bilibili_url(url: str) -> str:
+    """
+    Extract the BV ID from any Bilibili URL (video, watch-later, share links)
+    and return a normalized video URL.
+    """
+    match = re.search(r"(BV[a-zA-Z0-9]{10})", url)
+    if match:
+        bvid = match.group(1)
+        return f"https://www.bilibili.com/video/{bvid}"
+    return url
+
 def sanitize_filename(filename: str) -> str:
     """
     Sanitize filename by removing/replacing filesystem-unsafe characters.

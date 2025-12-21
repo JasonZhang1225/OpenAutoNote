@@ -15,7 +15,11 @@ from openai import AsyncOpenAI
 from core.downloader import download_video
 from core.transcriber import TranscriberFactory
 from core.visual_processor import process_video_for_vision, extract_frame
-from core.utils import build_multimodal_payload, timestamp_str_to_seconds
+from core.utils import (
+    build_multimodal_payload,
+    timestamp_str_to_seconds,
+    clean_bilibili_url,
+)
 from core.i18n import get_text
 from core.storage import (
     load_history,
@@ -38,7 +42,7 @@ DEFAULT_CONFIG = {
     "model_name": "gpt-4o",
     "language": "Simplified Chinese (Default)",
     "hardware_mode": "mlx",
-    "enable_vision": False,
+    "enable_vision": True,
     "vision_interval": 15,
     "vision_detail": "low",
     "detail_level": "Standard",
@@ -81,6 +85,9 @@ def detect_hardware():
 
 hardware_info = detect_hardware()
 
+# Default to the detected hardware for transcription (mlx on macOS, cuda if available on Windows, else cpu)
+DEFAULT_CONFIG["hardware_mode"] = hardware_info["type"]
+
 GENERATE_DIR = os.path.join(BASE_DIR, "generate")
 if not os.path.exists(GENERATE_DIR):
     os.makedirs(GENERATE_DIR)
@@ -88,13 +95,19 @@ app.add_static_files("/generate", GENERATE_DIR)
 
 
 def load_config():
+    cfg = DEFAULT_CONFIG.copy()
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                return {**DEFAULT_CONFIG, **json.load(f)}
+                cfg = {**DEFAULT_CONFIG, **json.load(f)}
         except Exception:
-            return DEFAULT_CONFIG.copy()
-    return DEFAULT_CONFIG.copy()
+            cfg = DEFAULT_CONFIG.copy()
+
+    # If stored hardware mode is invalid for this machine, fall back to detected type
+    if cfg.get("hardware_mode") not in hardware_info["valid_modes"]:
+        cfg["hardware_mode"] = hardware_info["type"]
+
+    return cfg
 
 
 def save_config(cfg):
@@ -133,7 +146,14 @@ class WebLogger:
                 pass  # Avoid errors if UI is disconnected
 
     def flush(self):
-        self.terminal.flush()
+        # Frozen Windows GUI may lack valid std streams; guard against flush errors
+        try:
+            if sys.stdout:
+                sys.stdout.flush()
+            if sys.stderr:
+                sys.stderr.flush()
+        except (AttributeError, ValueError, OSError):
+            pass
 
 
 # --- Atomic Finalization Helper ---
@@ -1335,6 +1355,7 @@ def index():
                 # Run download with domain-based cookie selection
                 cookies_yt = state.config.get("cookies_yt", "")
                 cookies_bili = state.config.get("cookies_bili", "")
+                url = clean_bilibili_url(url)
                 dl_res = await run.io_bound(
                     download_video,
                     url,
