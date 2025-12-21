@@ -210,6 +210,7 @@ async def async_transcribe(video_path, hardware_mode):
         transcriber = TranscriberFactory.get_transcriber(actual_mode)
         return transcriber.transcribe(video_path)
 
+    ui.notify("Checking/Loading MLX Model...", type="info", timeout=3000)
     return await run.io_bound(_t)
 
 

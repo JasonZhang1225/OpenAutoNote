@@ -4,7 +4,7 @@ openai
 pyinstaller
 faster-whisper
 psutil
-opencv-python
+opencv-python-headless
 
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch

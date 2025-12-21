@@ -16,6 +16,11 @@ jobs:
         with:
           python-version: "3.10"
 
+      - name: Set App Version
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          echo "TAURI_BUNDLE_VERSION=$VERSION" >> $GITHUB_ENV
+
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
@@ -61,6 +66,8 @@ jobs:
         run: |
           npm install
           npm run tauri build
+        env:
+          TAURI_BUNDLE_VERSION: ${{ env.TAURI_BUNDLE_VERSION }}
 
       - name: Upload Release
         uses: softprops/action-gh-release@v1
@@ -82,6 +89,12 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
+
+      - name: Set App Version
+        shell: bash
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          echo "TAURI_BUNDLE_VERSION=$VERSION" >> $GITHUB_ENV
 
       - name: Install Node.js
         uses: actions/setup-node@v4
@@ -123,7 +136,7 @@ jobs:
         shell: bash
         run: |
           cd python-core
-          pyinstaller -F main.py --name api-server
+          pyinstaller -F main.py --name api-server --collect-all cv2 --collect-all faster_whisper --collect-all ctranslate2
           mv dist/api-server.exe ../src-tauri/bin/api-server-x86_64-pc-windows-msvc.exe
           cd ..
 
@@ -138,11 +151,13 @@ jobs:
         run: |
           npm install
           npm run tauri build
+        env:
+          TAURI_BUNDLE_VERSION: ${{ env.TAURI_BUNDLE_VERSION }}
+          TAURI_BUNDLE_TARGETS: nsis
 
       - name: Rename Artifacts
         shell: bash
         run: |
-          mv src-tauri/target/release/bundle/msi/*.msi "OpenAutoNote_Windows_${{ matrix.variant }}_Setup.msi" || true
           mv src-tauri/target/release/bundle/nsis/*.exe "OpenAutoNote_Windows_${{ matrix.variant }}_Setup.exe" || true
 
       - name: Upload Release

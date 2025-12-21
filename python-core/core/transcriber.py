@@ -14,7 +14,6 @@ class MlxTranscriber(BaseTranscriber):
         try:
             from nicegui import ui
 
-            ui.notify("Checking/Loading MLX Model...", type="info", timeout=3000)
             import mlx_whisper
         except ImportError:
             raise ImportError(
