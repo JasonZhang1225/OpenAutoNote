@@ -19,7 +19,10 @@
         "active": true,
         "targets": "all",
         "externalBin": [
-            "bin/api-server"
+            "bin/api-server",
+            "bin/api-server.exe",
+            "bin/api-server-x86_64-pc-windows-msvc.exe",
+            "bin/api-server-aarch64-apple-darwin"
         ],
         "windows": {
             "nsis": {
