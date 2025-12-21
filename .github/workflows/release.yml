@@ -167,11 +167,16 @@ jobs:
           VERSION=${TAURI_APP_VERSION:-1.0.0}
           python -c "import json, pathlib, os; p=pathlib.Path('src-tauri/tauri.conf.json'); d=json.loads(p.read_text()); d['version']=os.environ.get('TAURI_APP_VERSION', d.get('version','1.0.0')); p.write_text(json.dumps(d, indent=4))"
           npm install
-          npm run tauri build
+          if [ "${{ matrix.variant }}" == "cuda" ]; then
+            # CUDA version is too big for WiX/MSI, so we only build NSIS (.exe)
+            npm run tauri build -- --bundles nsis
+          else
+            # CPU version is small enough for both (or just nsis as previously requested)
+            npm run tauri build -- --bundles nsis
+          fi
         env:
           TAURI_APP_VERSION: ${{ env.TAURI_APP_VERSION }}
           TAURI_BUNDLE_VERSION: ${{ env.TAURI_BUNDLE_VERSION }}
-          TAURI_BUNDLE_TARGETS: nsis
 
       - name: Rename Artifacts
         shell: bash
