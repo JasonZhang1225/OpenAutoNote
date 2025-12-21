@@ -5,3 +5,4 @@ pyinstaller
 mlx-whisper
 psutil
 opencv-python
+huggingface_hub

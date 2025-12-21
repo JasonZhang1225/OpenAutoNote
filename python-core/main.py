@@ -15,6 +15,7 @@ from openai import AsyncOpenAI
 from core.downloader import download_video
 from core.transcriber import TranscriberFactory
 from core.visual_processor import process_video_for_vision, extract_frame
+from core import model_manager
 from core.utils import (
     build_multimodal_payload,
     timestamp_str_to_seconds,
@@ -40,6 +41,7 @@ DEFAULT_CONFIG = {
     "api_key": "",
     "base_url": "https://api.openai.com/v1",
     "model_name": "gpt-4o",
+    "asr_model": "small",
     "language": "Simplified Chinese (Default)",
     "hardware_mode": "mlx",
     "enable_vision": True,
@@ -106,6 +108,13 @@ def load_config():
     # If stored hardware mode is invalid for this machine, fall back to detected type
     if cfg.get("hardware_mode") not in hardware_info["valid_modes"]:
         cfg["hardware_mode"] = hardware_info["type"]
+
+    # Ensure ASR model is valid for the current hardware backend
+    supported_models = model_manager.get_supported_models(cfg["hardware_mode"])
+    if cfg.get("asr_model") not in supported_models:
+        cfg["asr_model"] = "small" if "small" in supported_models else next(
+            iter(supported_models.keys()), "small"
+        )
 
     return cfg
 
@@ -227,7 +236,8 @@ async def async_transcribe(video_path, hardware_mode):
         if state.config.get("use_china_mirror"):
             os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 
-        transcriber = TranscriberFactory.get_transcriber(actual_mode)
+        asr_model = state.config.get("asr_model", "small")
+        transcriber = TranscriberFactory.get_transcriber(actual_mode, asr_model)
         return transcriber.transcribe(video_path)
 
     ui.notify("Checking/Loading MLX Model...", type="info", timeout=3000)
@@ -512,6 +522,110 @@ def index():
                     )
 
                     ui.separator().classes("opacity-30 my-1")
+
+                    # --- AI Model Management ---
+                    ui.label("AI Model Management").classes(
+                        "text-sm font-bold text-gray-700"
+                    )
+
+                    model_rows = {}
+
+                    model_select = ui.select(
+                        label="Current Model",
+                        options={},
+                        value=state.config.get("asr_model", "small"),
+                    ).bind_value(state.config, "asr_model").classes("w-full").props(
+                        "outlined dense options-dense"
+                    )
+
+                    model_status_area = ui.column().classes("w-full gap-2")
+
+                    async def refresh_model_ui():
+                        statuses = model_manager.get_model_statuses(
+                            state.config.get("hardware_mode", hardware_info["type"])
+                        )
+
+                        options = {
+                            m["key"]: f"{m['display']} ({'Installed' if m['installed'] else 'Not downloaded'})"
+                            for m in statuses
+                        }
+                        model_select.options = options
+                        if model_select.value not in options:
+                            model_select.value = next(iter(options.keys()), "small")
+                            state.config["asr_model"] = model_select.value
+                        model_select.update()
+
+                        model_rows.clear()
+                        model_status_area.clear()
+                        for m in statuses:
+                            with model_status_area:
+                                with ui.row().classes(
+                                    "w-full items-center justify-between bg-white rounded-lg p-2 shadow-sm"
+                                ):
+                                    ui.label(m["display"]).classes("text-sm font-medium")
+                                    status_text = "✅ Installed" if m["installed"] else "☁️ Not downloaded"
+                                    status_label = ui.label(status_text).classes(
+                                        "text-xs text-gray-600"
+                                    )
+
+                                    progress = (
+                                        ui.linear_progress(value=0)
+                                        .classes("w-32")
+                                        .style("display:none")
+                                        .props("rounded color=primary")
+                                    )
+
+                                    if m["installed"]:
+                                        btn = ui.button("Ready").props("flat disabled")
+                                    else:
+                                        async def handle_download(model_key=m["key"]):
+                                            btn.disable()
+                                            status_label.text = "Downloading..."
+                                            progress.style("display:block")
+                                            progress.props("indeterminate")
+                                            mirror = (
+                                                "https://hf-mirror.com"
+                                                if state.config.get("use_china_mirror")
+                                                else None
+                                            )
+                                            try:
+                                                await run.io_bound(
+                                                    model_manager.download_model,
+                                                    model_key,
+                                                    state.config.get(
+                                                        "hardware_mode", hardware_info["type"]
+                                                    ),
+                                                    mirror,
+                                                    None,
+                                                )
+                                                ui.notify(
+                                                    f"Model '{model_key}' downloaded.",
+                                                    type="positive",
+                                                )
+                                            except Exception as e:
+                                                ui.notify(
+                                                    f"Download failed: {str(e)}", type="negative"
+                                                )
+                                            progress.style("display:none")
+                                            btn.enable()
+                                            await refresh_model_ui()
+
+                                        btn = ui.button(
+                                            "Download",
+                                            on_click=lambda mk=m["key"]: ui.run_async(
+                                                handle_download(mk)
+                                            ),
+                                        ).props("color=primary outline")
+
+                                    model_rows[m["key"]] = {
+                                        "status_label": status_label,
+                                        "btn": btn,
+                                        "progress": progress,
+                                    }
+
+                    ui.timer(
+                        0.1, lambda: ui.run_async(refresh_model_ui()), once=True
+                    )
 
                     ui.label(
                         get_text("cookies_netscape_format", state.config["ui_language"])

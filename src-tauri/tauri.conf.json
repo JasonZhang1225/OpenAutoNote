@@ -20,7 +20,12 @@
         "targets": "all",
         "externalBin": [
             "bin/api-server"
-        ]
+        ],
+        "windows": {
+            "nsis": {
+                "compression": "none"
+            }
+        }
     },
     "app": {
         "withGlobalTauri": true,
