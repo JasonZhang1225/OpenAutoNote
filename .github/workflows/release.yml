@@ -66,13 +66,7 @@ jobs:
       - name: Build Tauri
         run: |
           VERSION=${TAURI_APP_VERSION:-1.0.0}
-          python - <<'PY'
-import json, pathlib, os
-path = pathlib.Path('src-tauri/tauri.conf.json')
-data = json.loads(path.read_text())
-data['version'] = os.environ.get('TAURI_APP_VERSION', data.get('version', '1.0.0'))
-path.write_text(json.dumps(data, indent=4))
-PY
+          python -c "import json, pathlib, os; p=pathlib.Path('src-tauri/tauri.conf.json'); d=json.loads(p.read_text()); d['version']=os.environ.get('TAURI_APP_VERSION', d.get('version','1.0.0')); p.write_text(json.dumps(d, indent=4))"
           npm install
           npm run tauri build
         env:
@@ -161,13 +155,7 @@ PY
         shell: bash
         run: |
           VERSION=${TAURI_APP_VERSION:-1.0.0}
-          python - <<'PY'
-import json, pathlib, os
-path = pathlib.Path('src-tauri/tauri.conf.json')
-data = json.loads(path.read_text())
-data['version'] = os.environ.get('TAURI_APP_VERSION', data.get('version', '1.0.0'))
-path.write_text(json.dumps(data, indent=4))
-PY
+          python -c "import json, pathlib, os; p=pathlib.Path('src-tauri/tauri.conf.json'); d=json.loads(p.read_text()); d['version']=os.environ.get('TAURI_APP_VERSION', d.get('version','1.0.0')); p.write_text(json.dumps(d, indent=4))"
           npm install
           npm run tauri build
         env:
@@ -185,5 +173,4 @@ PY
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: |
-            OpenAutoNote_Windows_${{ matrix.variant }}_Setup.msi
             OpenAutoNote_Windows_${{ matrix.variant }}_Setup.exe
