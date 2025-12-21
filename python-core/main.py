@@ -530,10 +530,12 @@ def index():
 
                     model_rows = {}
 
+                    # Initialize with a placeholder to avoid validation error
+                    current_model = state.config.get("asr_model", "small")
                     model_select = ui.select(
                         label="Current Model",
-                        options={},
-                        value=state.config.get("asr_model", "small"),
+                        options={current_model: current_model},  # Temporary placeholder
+                        value=current_model,
                     ).bind_value(state.config, "asr_model").classes("w-full").props(
                         "outlined dense options-dense"
                     )
