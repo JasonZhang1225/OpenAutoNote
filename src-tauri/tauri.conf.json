@@ -31,6 +31,27 @@
         "withGlobalTauri": true,
         "security": {
             "csp": null
-        }
+        },
+        "windows": [
+            {
+                "label": "main",
+                "url": "http://localhost:8964",
+                "title": "OpenAutoNote",
+                "visible": false,
+                "width": 1200,
+                "height": 800,
+                "resizable": true
+            },
+            {
+                "label": "splashscreen",
+                "url": "splash.html",
+                "decorations": false,
+                "transparent": true,
+                "width": 400,
+                "height": 300,
+                "center": true,
+                "alwaysOnTop": true
+            }
+        ]
     }
 }

@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OpenAutoNote - Initializing</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0;
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: radial-gradient(circle at 20% 20%, #1f1f2e, #0d0d16 60%);
+      color: #e8e8f0;
+      font-family: "Segoe UI", "Inter", system-ui, -apple-system, sans-serif;
+    }
+    .card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      padding: 28px 32px;
+      border-radius: 18px;
+      background: rgba(255,255,255,0.06);
+      box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    .spinner {
+      width: 56px;
+      height: 56px;
+      border: 5px solid rgba(255,255,255,0.15);
+      border-top-color: #7dc1ff;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .title { font-weight: 700; letter-spacing: 0.4px; }
+    .subtitle { opacity: 0.8; font-size: 0.95rem; }
+    img { width: 64px; height: 64px; border-radius: 14px; box-shadow: 0 6px 18px rgba(0,0,0,0.35); }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <img src="icons/128x128.png" alt="OpenAutoNote" />
+    <div class="spinner"></div>
+    <div class="title">Initializing AI Engine...</div>
+    <div class="subtitle">启动中，请稍候</div>
+  </div>
+</body>
+</html>

@@ -168,10 +168,10 @@ jobs:
           python -c "import json, pathlib, os; p=pathlib.Path('src-tauri/tauri.conf.json'); d=json.loads(p.read_text()); d['version']=os.environ.get('TAURI_APP_VERSION', d.get('version','1.0.0')); p.write_text(json.dumps(d, indent=4))"
           npm install
           if [ "${{ matrix.variant }}" == "cuda" ]; then
-            # CUDA version is too big for WiX/MSI, so we only build NSIS (.exe)
-            npm run tauri build -- --bundles nsis
+            # CUDA build: skip NSIS to avoid mmap failures, produce portable app bundle
+            npm run tauri build -- --bundles app
           else
-            # CPU version is small enough for both (or just nsis as previously requested)
+            # CPU build: keep NSIS installer
             npm run tauri build -- --bundles nsis
           fi
         env:
@@ -181,7 +181,12 @@ jobs:
       - name: Rename Artifacts
         shell: bash
         run: |
-          mv src-tauri/target/release/bundle/nsis/*.exe "OpenAutoNote_Windows_${{ matrix.variant }}_Setup.exe" || true
+          if [ "${{ matrix.variant }}" == "cuda" ]; then
+            # Portable app bundle output
+            mv src-tauri/target/release/open-auto-note.exe "OpenAutoNote_Windows_${{ matrix.variant }}.exe" || true
+          else
+            mv src-tauri/target/release/bundle/nsis/*.exe "OpenAutoNote_Windows_${{ matrix.variant }}_Setup.exe" || true
+          fi
 
       - name: Upload Release
         uses: softprops/action-gh-release@v1
@@ -189,3 +194,4 @@ jobs:
         with:
           files: |
             OpenAutoNote_Windows_${{ matrix.variant }}_Setup.exe
+            OpenAutoNote_Windows_${{ matrix.variant }}.exe
