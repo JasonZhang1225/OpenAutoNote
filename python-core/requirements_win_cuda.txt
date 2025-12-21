@@ -6,5 +6,5 @@ faster-whisper
 psutil
 opencv-python-headless
 --extra-index-url https://download.pytorch.org/whl/cu121
-torch
-torchaudio
+torch==2.1.2+cu121
+torchaudio==2.1.2+cu121

@@ -138,13 +138,29 @@ jobs:
             pip install -r python-core/requirements_win_cpu.txt
           else
             pip install -r python-core/requirements_win_cuda.txt
+            # Ensure CUDA-enabled faster-whisper stack (cu121)
+            pip install --force-reinstall "faster-whisper==1.1.0" "ctranslate2==4.5.0"
+            python - <<'PY'
+import importlib.util, pathlib
+import ctranslate2, faster_whisper
+root = pathlib.Path(ctranslate2.__file__).parent / 'lib'
+libs = list(root.glob('*.dll'))
+print('[DEBUG] ctranslate2 lib dir:', root)
+print('[DEBUG] DLL count:', len(libs))
+for p in libs[:10]:
+    print(' ', p.name)
+PY
           fi
 
       - name: Build Python Sidecar
         shell: bash
         run: |
           cd python-core
-          pyinstaller -F main.py --name api-server --collect-all cv2 --collect-all faster_whisper --collect-all ctranslate2 --collect-all torch --collect-all torchaudio
+          PYI_EXTRA=""
+          if [ "${{ matrix.variant }}" = "cuda" ]; then
+            PYI_EXTRA="--collect-binaries torch --collect-binaries torchaudio --collect-binaries ctranslate2 --collect-binaries faster_whisper"
+          fi
+          pyinstaller -F main.py --name api-server --collect-all cv2 --collect-all faster_whisper --collect-all ctranslate2 --collect-all torch --collect-all torchaudio $PYI_EXTRA
           mv dist/api-server.exe ../src-tauri/bin/api-server-x86_64-pc-windows-msvc.exe
           cd ..
 
