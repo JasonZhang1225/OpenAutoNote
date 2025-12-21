@@ -31,7 +31,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install Dependencies (System)
-        run: brew install ffmpeg aria2
+        run: brew install ffmpeg aria2 openssl@1.1
 
       - name: Install Dependencies (Python)
         run: |
@@ -54,7 +54,10 @@ jobs:
       - name: Build Python Sidecar
         run: |
           cd python-core
-          pyinstaller -F main.py --name api-server
+          OPENSSL_PREFIX=$(brew --prefix openssl@1.1)
+          pyinstaller -F main.py --name api-server \
+            --add-binary "${OPENSSL_PREFIX}/lib/libssl.1.1.dylib:." \
+            --add-binary "${OPENSSL_PREFIX}/lib/libcrypto.1.1.dylib:."
           mv dist/api-server ../src-tauri/bin/api-server-aarch64-apple-darwin
           cd ..
 
