@@ -140,16 +140,7 @@ jobs:
             pip install -r python-core/requirements_win_cuda.txt
             # Ensure CUDA-enabled faster-whisper stack (cu121)
             pip install --force-reinstall "faster-whisper==1.1.0" "ctranslate2==4.5.0"
-            python - <<'PY'
-import importlib.util, pathlib
-import ctranslate2, faster_whisper
-root = pathlib.Path(ctranslate2.__file__).parent / 'lib'
-libs = list(root.glob('*.dll'))
-print('[DEBUG] ctranslate2 lib dir:', root)
-print('[DEBUG] DLL count:', len(libs))
-for p in libs[:10]:
-    print(' ', p.name)
-PY
+            python -c "import pathlib, ctranslate2; root = pathlib.Path(ctranslate2.__file__).parent / 'lib'; libs = list(root.glob('*.dll')); print(f'[DEBUG] ctranslate2 lib dir: {root}'); print(f'[DEBUG] DLL count: {len(libs)}'); [print(f'  {p.name}') for p in libs[:10]]"
           fi
 
       - name: Build Python Sidecar
