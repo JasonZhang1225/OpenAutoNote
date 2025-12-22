@@ -1919,8 +1919,14 @@ def index():
                     break
 
         # Thread-safe UI updater helper
+        # Capture the main loop in the closure
+        try:
+            _main_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            _main_loop = asyncio.get_event_loop()
+
         def queue_ui_update(func):
-            app.call_soon(func)
+            _main_loop.call_soon_threadsafe(func)
 
         # ANSI escape code cleaner
         import re as regex_module
