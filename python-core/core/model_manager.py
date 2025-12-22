@@ -60,12 +60,53 @@ def _scan_repo_cache():
 
 
 def _repo_cache_path(repo_id: str) -> Optional[str]:
+    """
+    Check if a model exists in the Hugging Face cache.
+    Uses scan_cache_dir first, then falls back to direct filesystem check.
+    Supports multiple naming conventions for MLX models.
+    """
+    from pathlib import Path
+
+    # Method 1: Try huggingface_hub's scan_cache_dir
     cache = _scan_repo_cache()
-    if not cache:
-        return None
-    for repo in cache.repos:
-        if getattr(repo, "repo_id", None) == repo_id:
-            return getattr(repo, "cache_dir", None)
+    if cache:
+        for repo in cache.repos:
+            if getattr(repo, "repo_id", None) == repo_id:
+                path = getattr(repo, "repo_path", None) or getattr(
+                    repo, "cache_dir", None
+                )
+                if path:
+                    return str(path)
+
+    # Method 2: Direct filesystem check (fallback)
+    cache_dir = Path(os.path.expanduser("~/.cache/huggingface/hub"))
+
+    # Build list of candidate folder names to check
+    # HF uses format: models--{org}--{model}
+    base_folder = "models--" + repo_id.replace("/", "--")
+
+    # For MLX models, check both with and without -mlx suffix
+    # e.g., whisper-tiny-mlx vs whisper-tiny
+    candidates = [base_folder]
+
+    if base_folder.endswith("-mlx"):
+        # Also check without -mlx suffix
+        candidates.append(base_folder[:-4])  # Remove "-mlx"
+    elif "whisper-" in base_folder and not base_folder.endswith("-mlx"):
+        # Also check with -mlx suffix
+        candidates.append(base_folder + "-mlx")
+
+    # Check each candidate
+    for folder_name in candidates:
+        model_path = cache_dir / folder_name
+        if model_path.exists():
+            # Verify it has actual model files (not just an empty folder)
+            snapshots_dir = model_path / "snapshots"
+            if snapshots_dir.exists() and any(snapshots_dir.iterdir()):
+                print(f"[ModelCheck] ✅ Found: {folder_name}")
+                return str(model_path)
+
+    print(f"[ModelCheck] ❌ Not found: {candidates}")
     return None
 
 
@@ -126,7 +167,9 @@ def download_model(
         except Exception:
             pass
 
-    path = snapshot_download(repo_id=repo_id, resume_download=True, local_files_only=False)
+    path = snapshot_download(
+        repo_id=repo_id, resume_download=True, local_files_only=False
+    )
 
     if progress_cb:
         try:

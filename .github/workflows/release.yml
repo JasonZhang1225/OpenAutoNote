@@ -59,8 +59,8 @@ jobs:
             --add-binary "${OPENSSL_PREFIX}/lib/libssl.1.1.dylib:." \
             --add-binary "${OPENSSL_PREFIX}/lib/libcrypto.1.1.dylib:."
           mkdir -p ../src-tauri/bin
-          # Rename to a generic name so externalBin can pick it up for macOS
-          mv dist/api-server ../src-tauri/bin/api-server
+          # Rename to match the target triple (Apple Silicon ARM64)
+          mv dist/api-server ../src-tauri/bin/api-server-aarch64-apple-darwin
           cd ..
 
       - name: Prepare Placeholder Assets

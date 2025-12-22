@@ -19,8 +19,7 @@
         "active": true,
         "targets": "all",
         "externalBin": [
-            "bin/api-server",
-            "bin/api-server.exe"
+            "bin/api-server"
         ],
         "windows": {
             "nsis": {

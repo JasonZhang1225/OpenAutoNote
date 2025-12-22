@@ -112,8 +112,10 @@ def load_config():
     # Ensure ASR model is valid for the current hardware backend
     supported_models = model_manager.get_supported_models(cfg["hardware_mode"])
     if cfg.get("asr_model") not in supported_models:
-        cfg["asr_model"] = "small" if "small" in supported_models else next(
-            iter(supported_models.keys()), "small"
+        cfg["asr_model"] = (
+            "small"
+            if "small" in supported_models
+            else next(iter(supported_models.keys()), "small")
         )
 
     return cfg
@@ -155,12 +157,11 @@ class WebLogger:
                 pass  # Avoid errors if UI is disconnected
 
     def flush(self):
-        # Frozen Windows GUI may lack valid std streams; guard against flush errors
+        # Use original stdout/stderr handles to avoid infinite recursion
+        # when self is assigned to sys.stdout/sys.stderr
         try:
-            if sys.stdout:
-                sys.stdout.flush()
-            if sys.stderr:
-                sys.stderr.flush()
+            sys.__stdout__.flush()
+            sys.__stderr__.flush()
         except (AttributeError, ValueError, OSError):
             pass
 
@@ -532,12 +533,17 @@ def index():
 
                     # Initialize with a placeholder to avoid validation error
                     current_model = state.config.get("asr_model", "small")
-                    model_select = ui.select(
-                        label="Current Model",
-                        options={current_model: current_model},  # Temporary placeholder
-                        value=current_model,
-                    ).bind_value(state.config, "asr_model").classes("w-full").props(
-                        "outlined dense options-dense"
+                    model_select = (
+                        ui.select(
+                            label="Current Model",
+                            options={
+                                current_model: current_model
+                            },  # Temporary placeholder
+                            value=current_model,
+                        )
+                        .bind_value(state.config, "asr_model")
+                        .classes("w-full")
+                        .props("outlined dense options-dense")
                     )
 
                     model_status_area = ui.column().classes("w-full gap-2")
@@ -547,16 +553,22 @@ def index():
                             state.config.get("hardware_mode", hardware_info["type"])
                         )
 
-                        options = {
-                            m["key"]: f"{m['display']} ({'Installed' if m['installed'] else 'Not downloaded'})"
+                        # Build new options dict (don't modify in place)
+                        new_options = {
+                            m[
+                                "key"
+                            ]: f"{m['display']} ({'Installed' if m['installed'] else 'Not downloaded'})"
                             for m in statuses
                         }
-                        model_select.options = options
-                        if model_select.value not in options:
-                            model_select.value = next(iter(options.keys()), "small")
+
+                        # Update select: completely replace options
+                        model_select.options = new_options
+                        if model_select.value not in new_options:
+                            model_select.value = next(iter(new_options.keys()), "small")
                             state.config["asr_model"] = model_select.value
                         model_select.update()
 
+                        # Clear tracking dict and UI container BEFORE rebuilding
                         model_rows.clear()
                         model_status_area.clear()
                         for m in statuses:
@@ -564,8 +576,14 @@ def index():
                                 with ui.row().classes(
                                     "w-full items-center justify-between bg-white rounded-lg p-2 shadow-sm"
                                 ):
-                                    ui.label(m["display"]).classes("text-sm font-medium")
-                                    status_text = "✅ Installed" if m["installed"] else "☁️ Not downloaded"
+                                    ui.label(m["display"]).classes(
+                                        "text-sm font-medium"
+                                    )
+                                    status_text = (
+                                        "✅ Installed"
+                                        if m["installed"]
+                                        else "☁️ Not downloaded"
+                                    )
                                     status_label = ui.label(status_text).classes(
                                         "text-xs text-gray-600"
                                     )
@@ -580,6 +598,7 @@ def index():
                                     if m["installed"]:
                                         btn = ui.button("Ready").props("flat disabled")
                                     else:
+
                                         async def handle_download(model_key=m["key"]):
                                             btn.disable()
                                             status_label.text = "Downloading..."
@@ -595,7 +614,8 @@ def index():
                                                     model_manager.download_model,
                                                     model_key,
                                                     state.config.get(
-                                                        "hardware_mode", hardware_info["type"]
+                                                        "hardware_mode",
+                                                        hardware_info["type"],
                                                     ),
                                                     mirror,
                                                     None,
@@ -606,7 +626,8 @@ def index():
                                                 )
                                             except Exception as e:
                                                 ui.notify(
-                                                    f"Download failed: {str(e)}", type="negative"
+                                                    f"Download failed: {str(e)}",
+                                                    type="negative",
                                                 )
                                             progress.style("display:none")
                                             btn.enable()
@@ -614,9 +635,9 @@ def index():
 
                                         btn = ui.button(
                                             "Download",
-                                            on_click=lambda mk=m["key"]: ui.run_async(
-                                                handle_download(mk)
-                                            ),
+                                            on_click=lambda mk=m[
+                                                "key"
+                                            ]: handle_download(mk),
                                         ).props("color=primary outline")
 
                                     model_rows[m["key"]] = {
@@ -625,9 +646,7 @@ def index():
                                         "progress": progress,
                                     }
 
-                    ui.timer(
-                        0.1, lambda: ui.run_async(refresh_model_ui()), once=True
-                    )
+                    ui.timer(0.1, refresh_model_ui, once=True)
 
                     ui.label(
                         get_text("cookies_netscape_format", state.config["ui_language"])
