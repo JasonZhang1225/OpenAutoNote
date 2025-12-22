@@ -1920,7 +1920,7 @@ def index():
 
         # Thread-safe UI updater helper
         def queue_ui_update(func):
-            func()
+            app.call_soon(func)
 
         # ANSI escape code cleaner
         import re as regex_module
@@ -2028,10 +2028,12 @@ def index():
                             eta = clean_ansi(d.get("_eta_str", "N/A"))
 
                             # Update UI
-                            dl_progress.value = percent
-                            dl_status.text = (
-                                f"{percent:.1%} | Speed: {speed} | ETA: {eta}"
-                            )
+                            def _update_dl():
+                                dl_progress.value = percent
+                                dl_status.text = (
+                                    f"{percent:.1%} | Speed: {speed} | ETA: {eta}"
+                                )
+                            queue_ui_update(_update_dl)
                         except Exception:
                             pass
                     elif d["status"] == "finished":
@@ -2129,22 +2131,24 @@ def index():
 
                 # Define progress callback for real-time updates
                 def transcript_progress_callback(transcript):
-                    # Update stepper transcript
-                    stepper_transcript_label.set_content(transcript)
-                    # Update main page transcript
-                    transcript_label.set_content(transcript)
-                    # Update history record with partial transcript
-                    sessions = load_history()
-                    for s in sessions:
-                        if s["id"] == task_id:
-                            s["transcript"] = transcript
-                            save_history(sessions)
-                            # Refresh history list to show updated transcript
-                            if 'history_list' in globals():
-                                history_list.refresh()
-                            elif 'history_list' in locals():
-                                locals()['history_list'].refresh()
-                            break
+                    def _update_ts():
+                        # Update stepper transcript
+                        stepper_transcript_label.set_content(transcript)
+                        # Update main page transcript
+                        transcript_label.set_content(transcript)
+                        # Update history record with partial transcript
+                        sessions = load_history()
+                        for s in sessions:
+                            if s["id"] == task_id:
+                                s["transcript"] = transcript
+                                save_history(sessions)
+                                # Refresh history list to show updated transcript
+                                if 'history_list' in globals():
+                                    history_list.refresh()
+                                elif 'history_list' in locals():
+                                    locals()['history_list'].refresh()
+                                break
+                    queue_ui_update(_update_ts)
 
                 segments = await async_transcribe(
                     dl_res["video_path"], state.config["hardware_mode"], transcript_progress_callback
