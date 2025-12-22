@@ -57,7 +57,11 @@ jobs:
           OPENSSL_PREFIX=$(brew --prefix openssl@1.1)
           pyinstaller -F main.py --name api-server \
             --add-binary "${OPENSSL_PREFIX}/lib/libssl.1.1.dylib:." \
-            --add-binary "${OPENSSL_PREFIX}/lib/libcrypto.1.1.dylib:."
+            --add-binary "${OPENSSL_PREFIX}/lib/libcrypto.1.1.dylib:." \
+            --hidden-import=psutil \
+            --hidden-import=cv2 \
+            --collect-all nicegui \
+            --collect-all openai
           mkdir -p ../src-tauri/bin
           # Rename to match the target triple (Apple Silicon ARM64)
           mv dist/api-server ../src-tauri/bin/api-server-aarch64-apple-darwin
