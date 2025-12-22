@@ -156,7 +156,7 @@ jobs:
           cd python-core
           PYI_EXTRA=""
           if [ "${{ matrix.variant }}" = "cuda" ]; then
-            PYI_EXTRA="--collect-binaries torch --collect-binaries torchaudio --collect-binaries ctranslate2 --collect-binaries faster_whisper"
+            PYI_EXTRA="--collect-binaries torch --collect-binaries ctranslate2 --collect-binaries faster_whisper"
           fi
           
           echo "=== Starting PyInstaller build for ${{ matrix.variant }} ==="
@@ -169,7 +169,6 @@ jobs:
             --collect-all faster_whisper \
             --collect-all ctranslate2 \
             --collect-all torch \
-            --collect-all torchaudio \
             $PYI_EXTRA
           
           echo "=== PyInstaller finished. Checking output ==="
