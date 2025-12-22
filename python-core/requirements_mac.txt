@@ -6,3 +6,4 @@ mlx-whisper
 psutil
 opencv-python
 huggingface_hub
+latex2mathml
