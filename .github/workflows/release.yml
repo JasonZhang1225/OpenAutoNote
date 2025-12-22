@@ -152,11 +152,14 @@ jobs:
       - name: Build Python Sidecar
         shell: bash
         run: |
+          set -e  # Exit on any error
           cd python-core
           PYI_EXTRA=""
           if [ "${{ matrix.variant }}" = "cuda" ]; then
             PYI_EXTRA="--collect-binaries torch --collect-binaries torchaudio --collect-binaries ctranslate2 --collect-binaries faster_whisper"
           fi
+          
+          echo "=== Starting PyInstaller build for ${{ matrix.variant }} ==="
           pyinstaller -F main.py --name api-server \
             --hidden-import=psutil \
             --hidden-import=cv2 \
@@ -168,7 +171,19 @@ jobs:
             --collect-all torch \
             --collect-all torchaudio \
             $PYI_EXTRA
+          
+          echo "=== PyInstaller finished. Checking output ==="
+          ls -la dist/
+          
+          if [ ! -f "dist/api-server.exe" ]; then
+            echo "ERROR: api-server.exe was not created!"
+            exit 1
+          fi
+          
+          mkdir -p ../src-tauri/bin
           mv dist/api-server.exe ../src-tauri/bin/api-server-x86_64-pc-windows-msvc.exe
+          echo "=== Sidecar binary moved successfully ==="
+          ls -la ../src-tauri/bin/
           cd ..
 
       - name: Prepare Placeholder Assets
