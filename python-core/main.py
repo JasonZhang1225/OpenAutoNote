@@ -57,7 +57,6 @@ DEFAULT_CONFIG = {
 
 # --- Hardware Detection ---
 import platform
-import subprocess
 
 
 def detect_hardware():
@@ -1480,7 +1479,7 @@ def index():
                             dl_status.text = (
                                 f"{percent:.1%} | Speed: {speed} | ETA: {eta}"
                             )
-                        except:
+                        except Exception:
                             pass
                     elif d["status"] == "finished":
                         queue_ui_update(

@@ -157,7 +157,17 @@ jobs:
           if [ "${{ matrix.variant }}" = "cuda" ]; then
             PYI_EXTRA="--collect-binaries torch --collect-binaries torchaudio --collect-binaries ctranslate2 --collect-binaries faster_whisper"
           fi
-          pyinstaller -F main.py --name api-server --collect-all cv2 --collect-all faster_whisper --collect-all ctranslate2 --collect-all torch --collect-all torchaudio $PYI_EXTRA
+          pyinstaller -F main.py --name api-server \
+            --hidden-import=psutil \
+            --hidden-import=cv2 \
+            --collect-all nicegui \
+            --collect-all openai \
+            --collect-all cv2 \
+            --collect-all faster_whisper \
+            --collect-all ctranslate2 \
+            --collect-all torch \
+            --collect-all torchaudio \
+            $PYI_EXTRA
           mv dist/api-server.exe ../src-tauri/bin/api-server-x86_64-pc-windows-msvc.exe
           cd ..
 
