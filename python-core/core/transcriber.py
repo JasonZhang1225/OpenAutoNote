@@ -6,7 +6,7 @@ from core import model_manager
 
 class BaseTranscriber(abc.ABC):
     @abc.abstractmethod
-    def transcribe(self, audio_path: str) -> List[Dict[str, Any]]:
+    def transcribe(self, audio_path: str, progress_callback=None) -> List[Dict[str, Any]]:
         pass
 
 
@@ -14,7 +14,7 @@ class MlxTranscriber(BaseTranscriber):
     def __init__(self, model_name: str):
         self.model_name = model_name
 
-    def transcribe(self, audio_path: str) -> List[Dict[str, Any]]:
+    def transcribe(self, audio_path: str, progress_callback=None) -> List[Dict[str, Any]]:
         try:
             import mlx_whisper
         except ImportError:
@@ -32,10 +32,15 @@ class MlxTranscriber(BaseTranscriber):
         )
 
         segments = []
+        full_transcript = ""
         for seg in result.get("segments", []):
+            segment_text = seg["text"].strip()
             segments.append(
-                {"start": seg["start"], "end": seg["end"], "text": seg["text"].strip()}
+                {"start": seg["start"], "end": seg["end"], "text": segment_text}
             )
+            full_transcript += f"[{seg['start']:.2f}-{seg['end']:.2f}] {segment_text}\n"
+            if progress_callback:
+                progress_callback(full_transcript.strip())
         return segments
 
 
@@ -45,7 +50,7 @@ class FasterTranscriber(BaseTranscriber):
         self.compute_type = compute_type
         self.model_name = model_name
 
-    def transcribe(self, audio_path: str) -> List[Dict[str, Any]]:
+    def transcribe(self, audio_path: str, progress_callback=None) -> List[Dict[str, Any]]:
         try:
             from faster_whisper import WhisperModel
         except ImportError:
@@ -67,14 +72,19 @@ class FasterTranscriber(BaseTranscriber):
         )
 
         segments = []
+        full_transcript = ""
         for segment in segments_generator:
+            segment_text = segment.text.strip()
             segments.append(
                 {
                     "start": segment.start,
                     "end": segment.end,
-                    "text": segment.text.strip(),
+                    "text": segment_text,
                 }
             )
+            full_transcript += f"[{segment.start:.2f}-{segment.end:.2f}] {segment_text}\n"
+            if progress_callback:
+                progress_callback(full_transcript.strip())
         return segments
 
 

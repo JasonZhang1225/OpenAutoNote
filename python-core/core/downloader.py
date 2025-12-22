@@ -3,9 +3,39 @@ import yt_dlp
 import traceback
 import shutil
 import time
+import hashlib
 from pathlib import Path
 from core.utils import sanitize_filename
 from datetime import datetime
+
+
+def generate_video_hash(file_path: str, sample_size: int = 4096) -> str:
+    """
+    Generate a unique hash for video file based on content sampling.
+    Samples beginning, middle, and end of file to create fingerprint.
+    """
+    if not os.path.exists(file_path):
+        return ""
+
+    file_size = os.path.getsize(file_path)
+    hash_obj = hashlib.sha256()
+    hash_obj.update(str(file_size).encode('utf-8'))  # Include file size in hash
+
+    with open(file_path, 'rb') as f:
+        # Read first sample
+        hash_obj.update(f.read(sample_size))
+
+        # Read middle sample if file is large enough
+        if file_size > sample_size * 3:
+            f.seek(file_size // 2)
+            hash_obj.update(f.read(sample_size))
+
+        # Read end sample
+        if file_size > sample_size:
+            f.seek(max(0, file_size - sample_size))
+            hash_obj.update(f.read(sample_size))
+
+    return hash_obj.hexdigest()
 
 
 def download_video(
@@ -105,6 +135,60 @@ def download_video(
 
             title = info.get("title", "Unknown Title")
             duration = info.get("duration")
+            
+        # --- Check for existing local files with matching content ---
+        # Scan all generate directories for video files
+        import glob
+        video_files = glob.glob(os.path.join(output_dir, "**/*.mp4"), recursive=True)
+        video_files += glob.glob(os.path.join(output_dir, "**/*.webm"), recursive=True)
+        video_files += glob.glob(os.path.join(output_dir, "**/*.mkv"), recursive=True)
+        
+        # Generate expected hash based on metadata
+        expected_hash_input = f"{title}_{duration}"
+        expected_hash = hashlib.sha256(expected_hash_input.encode('utf-8')).hexdigest()
+        
+        # Check each video file
+        for video_path in video_files:
+            try:
+                # Skip temporary files
+                if "temp_" in video_path:
+                    continue
+                    
+                # Get file size
+                file_size = os.path.getsize(video_path)
+                
+                # Check if file size is within reasonable range of expected
+                if duration:
+                    # Assume average bitrate of 5Mbps (adjust as needed)
+                    expected_size = duration * 5 * 1024 * 1024 / 8  # 5Mbps in bytes
+                    size_diff = abs(file_size - expected_size) / expected_size
+                    if size_diff > 0.2:  # Skip if size differs by more than 20%
+                        continue
+                
+                # Generate content hash
+                content_hash = generate_video_hash(video_path)
+                
+                # Check if this file matches
+                if content_hash and (expected_hash in content_hash or content_hash in expected_hash):
+                    print(f"[Downloader] Found matching local file: {video_path}")
+                    print(f"[Downloader] Using local file instead of re-downloading")
+                    
+                    # Clean up temp cookie file if exists
+                    if temp_cookie_file and os.path.exists(temp_cookie_file):
+                        os.remove(temp_cookie_file)
+                    
+                    return {
+                        "success": True,
+                        "title": title,
+                        "video_path": video_path,
+                        "project_dir": os.path.dirname(video_path),
+                        "duration": duration,
+                        "error": None,
+                    }
+                    
+            except Exception as e:
+                print(f"[Downloader] Error checking file {video_path}: {str(e)}")
+                continue
 
         # --- Prepare Paths ---
         sanitized_title = sanitize_filename(title)
@@ -174,8 +258,16 @@ def download_video(
                         raise last_error
 
             final_dir = os.path.join(output_dir, sanitized_title)
+            
+            # Avoid overwriting existing folders
             if os.path.exists(final_dir):
-                final_dir = os.path.join(output_dir, f"{sanitized_title}_{timestamp}")
+                counter = 1
+                base_dir = final_dir
+                
+                # Find the next available number suffix
+                while os.path.exists(final_dir):
+                    final_dir = f"{base_dir}_{counter}"
+                    counter += 1
 
             os.rename(temp_dir, final_dir)
 

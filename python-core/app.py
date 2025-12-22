@@ -145,9 +145,24 @@ def generate_summary_stream(title, full_text, segments, vision_frames, api_key, 
         )
         yield from response
     except Exception as e:
-        import traceback
-        error_msg = f"LLM Error: {str(e)}\n\nDetails: {traceback.format_exc()}"
-        print(error_msg)
+        # Fallback logic
+        error_str = str(e)
+        if enable_vision and vision_frames and ("ChatCompletionRequestMultiContent" in error_str or "InvalidParameter" in error_str or "400" in error_str):
+             print(f"Multimodal request failed ({error_str}), falling back to text-only...")
+             user_content = f"视频标题: {title}\n字幕内容:\n{full_text}\n\n请总结上述内容。"
+             response = client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content}
+                ],
+                stream=True
+            )
+             yield from response
+        else:
+            import traceback
+            error_msg = f"LLM Error: {str(e)}\n\nDetails: {traceback.format_exc()}"
+            print(error_msg)
         yield error_msg
 
 
