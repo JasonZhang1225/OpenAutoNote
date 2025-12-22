@@ -148,11 +148,26 @@ TRANSLATIONS = {
     "context_menu_rename": {"zh": "重命名", "en": "Rename"},
     "context_menu_delete": {"zh": "删除", "en": "Delete"},
     # --- Complexity Options ---
-    "complexity_option_1": {"zh": "⚡ 极简", "en": "⚡ Ultra Simple"},
-    "complexity_option_2": {"zh": "📝 简洁", "en": "📝 Concise"},
-    "complexity_option_3": {"zh": "📊 标准", "en": "📊 Standard"},
-    "complexity_option_4": {"zh": "📚 详细", "en": "📚 Detailed"},
-    "complexity_option_5": {"zh": "🔬 深度", "en": "🔬 Deep"},
+    "complexity_option_1": {
+        "zh": "⚡ 极简（默认不生成目录）",
+        "en": "⚡ Ultra Simple (Default No Table of Contents)",
+    },
+    "complexity_option_2": {
+        "zh": "📝 简洁（默认不生成目录）",
+        "en": "📝 Concise (Default No Table of Contents)",
+    },
+    "complexity_option_3": {
+        "zh": "📊 标准（系统判断是否生成目录）",
+        "en": "📊 Standard (System Judgment on Whether to Generate Table of Contents)",
+    },
+    "complexity_option_4": {
+        "zh": "📚 详细（默认生成目录）",
+        "en": "📚 Detailed (Default Table of Contents)",
+    },
+    "complexity_option_5": {
+        "zh": "🔬 深度（默认生成目录）",
+        "en": "🔬 Deep (Default Table of Contents)",
+    },
     # --- System Terminal ---
     "system_terminal": {"zh": "📟 系统日志终端", "en": "📟 System Log Terminal"},
     # --- Selection Label ---
@@ -203,7 +218,7 @@ TRANSLATIONS = {
         "en": "2.  **Structured Table of Contents**",
     },
     "structured_toc_desc": {
-        "zh": "    -   在复杂度为 4 和 5 时必须生成！在复杂度为 3 时，你一句视频内容复杂度和内容量决定是否生成。在复杂度为 1、2 时不生成\n    -   紧接着核心洞察之后，必须生成一个**可点击跳转的目录**。\n    -   格式要求：使用 Markdown 锚点链接，例如：\n    ```\n    ## 📑 目录\n    - [🎯 章节一标题](#章节一标题)\n    - [⚡ 章节二标题](#章节二标题)\n    - [💰 章节三标题](#章节三标题)\n    ```\n    -   每个章节标题在正文中使用 `## 🎯 章节一标题` 格式，确保锚点链接可以正确跳转。",
+        "zh": "    -   在复杂度为 4 和 5 时必须生成目录！在复杂度为 3 时，你根据视频内容复杂度和内容量决定是否生成目录。在复杂度为 1、2 时不生成目录。\n    -   紧接着核心洞察之后，必须生成一个**可点击跳转的目录**。\n    -   格式要求：使用 Markdown 锚点链接，例如：\n    ```\n    ## 📑 目录\n    - [🎯 章节一标题](#章节一标题)\n    - [⚡ 章节二标题](#章节二标题)\n    - [💰 章节三标题](#章节三标题)\n    ```\n    -   每个章节标题在正文中使用 `## 🎯 章节一标题` 格式，确保锚点链接可以正确跳转。",
         "en": "    -   Must be generated for complexity levels 4 and 5! For complexity level 3, decide whether to generate based on video content complexity and volume. Do not generate for complexity levels 1 and 2.\n    -   Immediately after the core insight, you must generate a **clickable table of contents**.\n    -   Format requirements: Use Markdown anchor links, for example:\n    ```\n    ## 📑 Table of Contents\n    - [🎯 Chapter 1 Title](#chapter-1-title)\n    - [⚡ Chapter 2 Title](#chapter-2-title)\n    - [💰 Chapter 3 Title](#chapter-3-title)\n    ```\n    -   Each chapter title in the main text uses the format `## 🎯 Chapter 1 Title` to ensure anchor links can jump correctly.",
     },
     "structured_sections": {

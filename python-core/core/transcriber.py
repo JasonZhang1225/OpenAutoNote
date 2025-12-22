@@ -16,8 +16,6 @@ class MlxTranscriber(BaseTranscriber):
 
     def transcribe(self, audio_path: str) -> List[Dict[str, Any]]:
         try:
-            from nicegui import ui
-
             import mlx_whisper
         except ImportError:
             raise ImportError(
@@ -25,17 +23,13 @@ class MlxTranscriber(BaseTranscriber):
             )
 
         # mlx_whisper.transcribe returns a dict with 'text' and 'segments'
-        # Adding initial_prompt to guide it towards Simplified Chinese
-        try:
-            result = mlx_whisper.transcribe(
-                audio_path,
-                initial_prompt="以下是简体中文句子。",
-                model=self.model_name,
-            )
-            ui.notify("Model Loaded & Transcription Started!", type="positive")
-        except Exception as e:
-            ui.notify(f"Model Error: {str(e)}", type="negative")
-            raise e
+        # Using path_or_hf_repo parameter (API changed from 'model')
+        # Note: ui.notify cannot be called from background thread
+        result = mlx_whisper.transcribe(
+            audio_path,
+            initial_prompt="以下是简体中文句子。",
+            path_or_hf_repo=self.model_name,
+        )
 
         segments = []
         for seg in result.get("segments", []):
@@ -53,28 +47,20 @@ class FasterTranscriber(BaseTranscriber):
 
     def transcribe(self, audio_path: str) -> List[Dict[str, Any]]:
         try:
-            from nicegui import ui
             from faster_whisper import WhisperModel
         except ImportError:
             raise ImportError("faster-whisper not installed.")
 
-        ui.notify(
-            f"Loading Model (Device: {self.device})... this may take a while if downloading.",
-            type="info",
-            timeout=None,
-        )
+        # Note: ui.notify cannot be called from background thread
+        print(f"[Transcriber] Loading Model (Device: {self.device})...")
 
-        try:
-            model_path = model_manager.resolve_model_path(
-                self.model_name, "cuda" if self.device == "cuda" else "cpu"
-            )
-            model = WhisperModel(
-                model_path, device=self.device, compute_type=self.compute_type
-            )
-            ui.notify("Model Loaded Successfully!", type="positive")
-        except Exception as e:
-            ui.notify(f"Model Load Failed: {str(e)}", type="negative")
-            raise e
+        model_path = model_manager.resolve_model_path(
+            self.model_name, "cuda" if self.device == "cuda" else "cpu"
+        )
+        model = WhisperModel(
+            model_path, device=self.device, compute_type=self.compute_type
+        )
+        print("[Transcriber] Model Loaded Successfully!")
 
         segments_generator, info = model.transcribe(
             audio_path, beam_size=5, initial_prompt="以下是简体中文句子。"

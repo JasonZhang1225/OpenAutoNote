@@ -140,6 +140,12 @@ def resolve_model_path(model_key: str, hardware_mode: str) -> str:
         # Fallback to "small" if unknown
         meta = models.get("small") or next(iter(models.values()), None)
     repo_id = meta.get("repo_id", "") if meta else ""
+
+    # For MLX backend, always return repo_id since mlx_whisper handles cache internally
+    if hardware_mode == "mlx":
+        return repo_id
+
+    # For ctranslate2/faster-whisper, we can use cached path or repo_id
     cache_path = _repo_cache_path(repo_id) if repo_id else None
     return cache_path or repo_id
 
