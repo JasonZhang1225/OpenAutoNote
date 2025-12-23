@@ -77,37 +77,81 @@ def detect_cuda_version() -> Optional[str]:
     return None
 
 
-def get_torch_cuda_package(cuda_version: str) -> str:
+def get_torch_cuda_package(cuda_version: str, use_mirror: bool = True) -> Tuple[str, str]:
     """
-    Get the appropriate PyTorch package URL for the given CUDA version.
-    Returns pip install command argument.
+    Get the appropriate PyTorch package specification for the given CUDA version.
+    Returns (package_spec, index_url) tuple.
+    
+    Args:
+        cuda_version: CUDA version string (e.g., "11.8", "12.1", "12.6")
+        use_mirror: Whether to use NJU mirror first
+    
+    Returns:
+        Tuple of (package_spec, index_url)
     """
     cuda_major_minor = cuda_version.split('.')[:2]
-    cuda_version_str = ''.join(cuda_major_minor)  # "11.8" -> "118"
     
-    # Map CUDA versions to PyTorch index URLs
+    # Map CUDA versions to PyTorch wheel suffixes and versions
+    # Format: (cu_suffix, torch_version)
+    # Note: PyTorch version format is torch==X.Y.Z+cu{version}
+    # For CUDA 12.6, use cu126 suffix, torch version depends on available builds
     cuda_to_torch = {
+        "12.6": ("cu126", "2.1.2+cu121"),  # Use cu126 wheel path, but torch version may vary
+        "12.5": ("cu121", "2.1.2+cu121"),
+        "12.4": ("cu121", "2.1.2+cu121"),
+        "12.3": ("cu121", "2.1.2+cu121"),
+        "12.2": ("cu121", "2.1.2+cu121"),
         "12.1": ("cu121", "2.1.2+cu121"),
-        "12.0": ("cu121", "2.1.2+cu121"),  # Use cu121 for 12.0
+        "12.0": ("cu121", "2.1.2+cu121"),
         "11.8": ("cu118", "2.1.2+cu118"),
-        "11.7": ("cu118", "2.1.2+cu118"),  # Use cu118 for 11.7
+        "11.7": ("cu118", "2.1.2+cu118"),
     }
     
-    # Try exact match first
+    # Determine CUDA wheel suffix and PyTorch version
     if cuda_version in cuda_to_torch:
-        index_suffix, version = cuda_to_torch[cuda_version]
-    elif cuda_major_minor[0] == "12":
-        # CUDA 12.x -> use cu121
-        index_suffix, version = cuda_to_torch["12.1"]
-    elif cuda_major_minor[0] == "11":
-        # CUDA 11.x -> use cu118
-        index_suffix, version = cuda_to_torch["11.8"]
+        cu_suffix, torch_version = cuda_to_torch[cuda_version]
+    elif len(cuda_major_minor) >= 2:
+        try:
+            major = int(cuda_major_minor[0])
+            minor = int(cuda_major_minor[1])
+            
+            if major == 12:
+                if minor >= 6:
+                    cu_suffix = "cu126"
+                    torch_version = "2.1.2+cu121"  # Try cu121 build first for 12.6
+                elif minor >= 1:
+                    cu_suffix = "cu121"
+                    torch_version = "2.1.2+cu121"
+                else:
+                    cu_suffix = "cu121"
+                    torch_version = "2.1.2+cu121"
+            elif major == 11:
+                cu_suffix = "cu118"
+                torch_version = "2.1.2+cu118"
+            elif major >= 13:
+                # For CUDA 13+, try cu126
+                cu_suffix = "cu126"
+                torch_version = "2.1.2+cu121"
+            else:
+                # Default for older versions
+                cu_suffix = "cu118"
+                torch_version = "2.1.2+cu118"
+        except (ValueError, IndexError):
+            # Fallback for invalid version format
+            cu_suffix = "cu121"
+            torch_version = "2.1.2+cu121"
     else:
-        # Default to cu121 for newer versions
-        index_suffix, version = cuda_to_torch["12.1"]
+        cu_suffix = "cu121"
+        torch_version = "2.1.2+cu121"
     
-    index_url = f"https://download.pytorch.org/whl/{index_suffix}"
-    return f"torch=={version} --index-url {index_url}"
+    # Choose index URL (mirror first, then official)
+    if use_mirror:
+        index_url = f"https://mirrors.nju.edu.cn/pytorch/whl/{cu_suffix}"
+    else:
+        index_url = f"https://download.pytorch.org/whl/{cu_suffix}"
+    
+    package_spec = f"torch=={torch_version}"
+    return package_spec, index_url
 
 
 def check_torch_cuda_installed() -> Tuple[bool, Optional[str]]:
@@ -132,9 +176,10 @@ def install_torch_cuda(
 ) -> bool:
     """
     Install PyTorch with CUDA support.
+    Tries NJU mirror first, falls back to official PyTorch index if failed.
     
     Args:
-        cuda_version: CUDA version (e.g., "11.8", "12.1"). If None, auto-detects.
+        cuda_version: CUDA version (e.g., "11.8", "12.1", "12.6"). If None, auto-detects.
         progress_callback: Optional callback(progress_text) for progress updates.
     
     Returns:
@@ -163,23 +208,66 @@ def install_torch_cuda(
         except Exception:
             pass
     
-    # Get the appropriate package
-    package_spec = get_torch_cuda_package(cuda_version)
-    parts = package_spec.split(" --index-url ")
-    package_name = parts[0]
-    index_url = parts[1] if len(parts) > 1 else None
+    # Get the appropriate package spec (try mirror first)
+    package_spec_mirror, index_url_mirror = get_torch_cuda_package(cuda_version, use_mirror=True)
+    package_spec_official, index_url_official = get_torch_cuda_package(cuda_version, use_mirror=False)
     
+    # Try mirror first
     if progress_callback:
         try:
-            progress_callback(f"正在下载并安装 {package_name}...")
+            progress_callback(f"正在从南京大学镜像下载 {package_spec_mirror}...")
         except Exception:
             pass
     
+    success = _try_install(package_spec_mirror, index_url_mirror, progress_callback, source_name="南京大学镜像")
+    
+    if success:
+        return True
+    
+    # Fall back to official source
+    if progress_callback:
+        try:
+            progress_callback(f"镜像源失败，切换到官方源下载 {package_spec_official}...")
+        except Exception:
+            pass
+    
+    success = _try_install(package_spec_official, index_url_official, progress_callback, source_name="PyTorch 官方源")
+    
+    if success:
+        return True
+    
+    # Both failed
+    if progress_callback:
+        try:
+            progress_callback("安装失败：镜像源和官方源都不可用，请检查网络连接")
+        except Exception:
+            pass
+    return False
+
+
+def _try_install(
+    package_spec: str,
+    index_url: str,
+    progress_callback: Optional[Callable[[str], None]],
+    source_name: str = "源"
+) -> bool:
+    """
+    Try to install PyTorch from a specific index URL.
+    Only installs torch (not torchvision/torchaudio) as they're not required for faster-whisper.
+    
+    Returns:
+        True if successful, False otherwise
+    """
     try:
         # Build pip install command
-        cmd = [sys.executable, "-m", "pip", "install", package_name]
-        if index_url:
-            cmd.extend(["--index-url", index_url])
+        # Only install torch, not torchvision/torchaudio (not needed for faster-whisper)
+        cmd = [sys.executable, "-m", "pip", "install", package_spec, "--index-url", index_url]
+        
+        if progress_callback:
+            try:
+                progress_callback(f"正在从{source_name}下载并安装 {package_spec}...")
+            except Exception:
+                pass
         
         # Run pip install
         result = subprocess.run(
@@ -192,31 +280,37 @@ def install_torch_cuda(
         if result.returncode == 0:
             if progress_callback:
                 try:
-                    progress_callback("PyTorch CUDA 安装成功！")
+                    progress_callback(f"PyTorch CUDA 安装成功！(使用{source_name})")
                 except Exception:
                     pass
+            print(f"[TorchManager] Successfully installed {package_spec} from {source_name}")
             return True
         else:
+            error_msg = result.stderr if result.stderr else result.stdout
+            # Extract useful error information
+            error_preview = error_msg[:200] if error_msg else "未知错误"
             if progress_callback:
                 try:
-                    progress_callback(f"安装失败: {result.stderr}")
+                    progress_callback(f"{source_name}下载失败: {error_preview}")
                 except Exception:
                     pass
-            print(f"[TorchManager] Install failed: {result.stderr}")
+            print(f"[TorchManager] Install failed from {source_name}")
+            print(f"[TorchManager] Error output: {error_msg}")
             return False
     except subprocess.TimeoutExpired:
         if progress_callback:
             try:
-                progress_callback("安装超时，请检查网络连接")
+                progress_callback(f"从{source_name}下载超时（10分钟）")
             except Exception:
                 pass
+        print(f"[TorchManager] Timeout when installing from {source_name}")
         return False
     except Exception as e:
         if progress_callback:
             try:
-                progress_callback(f"安装出错: {str(e)}")
+                progress_callback(f"从{source_name}下载出错: {str(e)}")
             except Exception:
                 pass
-        print(f"[TorchManager] Install error: {e}")
+        print(f"[TorchManager] Error when installing from {source_name}: {e}")
         return False
 
