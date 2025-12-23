@@ -198,8 +198,13 @@ jobs:
           VERSION=${TAURI_APP_VERSION:-1.0.0}
           python -c "import json, pathlib, os; p=pathlib.Path('src-tauri/tauri.conf.json'); d=json.loads(p.read_text()); d['version']=os.environ.get('TAURI_APP_VERSION', d.get('version','1.0.0')); p.write_text(json.dumps(d, indent=4))"
           npm install
-          # NSIS is the supported Windows bundle; compression is disabled in tauri.conf for large CUDA sidecar
-          npm run tauri build -- --bundles nsis
+          # For CUDA variant, skip NSIS (file too large) and use zip instead
+          # For CPU variant, use NSIS installer
+          if [ "${{ matrix.variant }}" == "cuda" ]; then
+            npm run tauri build -- --bundles zip
+          else
+            npm run tauri build -- --bundles nsis
+          fi
         env:
           TAURI_APP_VERSION: ${{ env.TAURI_APP_VERSION }}
           TAURI_BUNDLE_VERSION: ${{ env.TAURI_BUNDLE_VERSION }}
@@ -209,9 +214,11 @@ jobs:
         run: |
           VERSION=${TAURI_BUNDLE_VERSION:-${GITHUB_REF_NAME#refs/tags/}}
           if [ "${{ matrix.variant }}" == "cuda" ]; then
-            OUT="OpenAutoNote_${VERSION}_Windows_${{ matrix.variant }}.exe"
-            mv src-tauri/target/release/open-auto-note.exe "$OUT" || true
+            # CUDA version uses zip bundle (too large for NSIS)
+            OUT="OpenAutoNote_${VERSION}_Windows_${{ matrix.variant }}.zip"
+            mv src-tauri/target/release/bundle/zip/*.zip "$OUT" || true
           else
+            # CPU version uses NSIS installer
             OUT="OpenAutoNote_${VERSION}_Windows_${{ matrix.variant }}_Setup.exe"
             mv src-tauri/target/release/bundle/nsis/*.exe "$OUT" || true
           fi
