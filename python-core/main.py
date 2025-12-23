@@ -18,6 +18,7 @@ from core.downloader import download_video
 from core.transcriber import TranscriberFactory
 from core.visual_processor import process_video_for_vision, extract_frame
 from core import model_manager
+from core.torch_manager import check_torch_cuda_installed, install_torch_cuda, detect_cuda_version
 from core.utils import (
     build_multimodal_payload,
     timestamp_str_to_seconds,
@@ -296,9 +297,37 @@ async def async_transcribe(video_path, hardware_mode, progress_callback=None):
     def _t():
         # Safety Fallback
         actual_mode = hardware_mode
-        if hardware_mode == "cuda" and "cuda" not in hardware_info["valid_modes"]:
-            ui.notify("⚠️ CUDA not found, falling back to CPU", type="warning")
-            actual_mode = "cpu"
+        
+        # Check for CUDA mode and ensure torch is installed
+        if hardware_mode == "cuda":
+            torch_installed, _ = check_torch_cuda_installed()
+            if not torch_installed:
+                # Try to detect CUDA and install torch
+                cuda_version = detect_cuda_version()
+                if cuda_version:
+                    ui.notify(f"检测到 CUDA {cuda_version}，但未安装 PyTorch CUDA 版本。正在自动下载...", type="info", timeout=5000)
+                    def progress_update(msg):
+                        print(f"[Torch Install] {msg}")
+                    
+                    success = install_torch_cuda(cuda_version, progress_update)
+                    if success:
+                        # Re-check after installation
+                        torch_installed, _ = check_torch_cuda_installed()
+                        if torch_installed:
+                            ui.notify("✅ PyTorch CUDA 安装成功！", type="positive")
+                        else:
+                            ui.notify("⚠️ PyTorch CUDA 安装完成，但无法验证。继续使用 CPU 模式", type="warning")
+                            actual_mode = "cpu"
+                    else:
+                        ui.notify("⚠️ PyTorch CUDA 安装失败，回退到 CPU 模式", type="warning")
+                        actual_mode = "cpu"
+                else:
+                    ui.notify("⚠️ 未检测到 CUDA，回退到 CPU 模式", type="warning")
+                    actual_mode = "cpu"
+            elif "cuda" not in hardware_info["valid_modes"]:
+                # torch is installed but CUDA not available
+                ui.notify("⚠️ PyTorch 已安装，但 CUDA 不可用，回退到 CPU 模式", type="warning")
+                actual_mode = "cpu"
         elif hardware_mode == "mlx" and "mlx" not in hardware_info["valid_modes"]:
             ui.notify(
                 "⚠️ Apple Neural Engine not found, falling back to CPU", type="warning"
@@ -1316,7 +1345,7 @@ def index():
 
                     ui.separator()
 
-                    ui.select(
+                    hardware_select = ui.select(
                         label=get_text(
                             "lbl_hardware_mode", state.config["ui_language"]
                         ),
@@ -1335,6 +1364,69 @@ def index():
                     ).bind_value(state.config, "hardware_mode").classes("w-full").props(
                         "outlined dense"
                     )
+                    
+                    # Torch CUDA installation helper for CUDA mode
+                    torch_status_row = ui.row().classes("w-full items-center gap-2 hidden")
+                    progress_label = ui.label("").classes("text-xs text-gray-600 hidden")
+                    torch_install_btn = ui.button(
+                        "下载 PyTorch CUDA", icon="download"
+                    ).classes("hidden").props("outlined")
+                    
+                    async def check_and_update_torch_status():
+                        """Check torch status and show install button if needed"""
+                        if hardware_select.value == "cuda":
+                            torch_installed, cuda_version = check_torch_cuda_installed()
+                            if not torch_installed:
+                                detected_cuda = detect_cuda_version()
+                                if detected_cuda:
+                                    torch_install_btn.text = f"下载 PyTorch CUDA (检测到 CUDA {detected_cuda})"
+                                    torch_status_row.classes(remove="hidden")
+                                    torch_install_btn.classes(remove="hidden")
+                                else:
+                                    torch_status_row.classes(add="hidden")
+                            else:
+                                torch_status_row.classes(add="hidden")
+                        else:
+                            torch_status_row.classes(add="hidden")
+                    
+                    async def install_torch_handler():
+                        """Handle torch installation"""
+                        torch_install_btn.disable()
+                        torch_install_btn.text = "正在下载..."
+                        progress_label.classes(remove="hidden")
+                        progress_label.text = "检测 CUDA 版本..."
+                        
+                        def progress_callback(msg):
+                            progress_label.text = msg
+                            progress_label.update()
+                        
+                        detected_cuda = detect_cuda_version()
+                        if not detected_cuda:
+                            ui.notify("❌ 未检测到 CUDA，无法安装 PyTorch CUDA 版本", type="negative")
+                            torch_install_btn.enable()
+                            torch_install_btn.text = "下载 PyTorch CUDA"
+                            return
+                        
+                        success = await run.io_bound(
+                            install_torch_cuda,
+                            detected_cuda,
+                            progress_callback
+                        )
+                        
+                        if success:
+                            ui.notify("✅ PyTorch CUDA 安装成功！请重启应用以生效。", type="positive", timeout=5000)
+                            torch_status_row.classes(add="hidden")
+                            progress_label.classes(add="hidden")
+                        else:
+                            ui.notify("❌ PyTorch CUDA 安装失败，请查看终端日志", type="negative", timeout=5000)
+                            torch_install_btn.enable()
+                            torch_install_btn.text = "重试下载 PyTorch CUDA"
+                    
+                    torch_install_btn.on_click(install_torch_handler)
+                    hardware_select.on_change(check_and_update_torch_status)
+                    
+                    # Initial check after a short delay
+                    ui.timer(0.5, check_and_update_torch_status, once=True)
 
                 # 系统设置
                 with ui.tab_panel(tab_sys).classes("p-1"):
