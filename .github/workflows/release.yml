@@ -163,6 +163,7 @@ jobs:
           pyinstaller -F main.py --name api-server \
             --hidden-import=psutil \
             --hidden-import=cv2 \
+            --exclude-module torchaudio \
             --collect-all nicegui \
             --collect-all openai \
             --collect-all cv2 \

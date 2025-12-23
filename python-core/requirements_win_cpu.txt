@@ -6,7 +6,8 @@ faster-whisper
 psutil
 opencv-python-headless
 huggingface_hub
+numpy
+latex2mathml
 
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch
-torchaudiolatex2mathml

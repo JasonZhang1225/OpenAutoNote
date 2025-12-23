@@ -57,6 +57,7 @@ DEFAULT_CONFIG = {
     "cookies_yt": "",
     "cookies_bili": "",
     "use_china_mirror": False,
+    "enable_chunk_summary": False,  # Default to False, user can enable for long videos
 }
 
 # --- Hardware Detection ---
@@ -143,24 +144,84 @@ class WebLogger:
         self.terminal = original_stream
         self.log_element = ui_log_element
         self._recursion_guard = False
+        self._last_chunk_log_time = 0
+        self._chunk_log_interval = 2.0  # Only log chunk updates every 2 seconds
+        self._chunk_log_count = 0
 
     def write(self, message):
-        # 1. Write to the real terminal (Keep backend working)
+        # 1. Write to the real terminal (Keep backend working - all logs go here)
         self.terminal.write(message)
 
-        # 2. Filter logic: Only filter out progress bars and very short whitespace messages
+        # 2. Filter logic: Filter out progress bars and token-level AI API logs
         # yt-dlp/aria2 progress bars usually start with '\r' or contain 'ETA' or '[download]'
-        if not ("\r" in message and ("%" in message or "ETA" in message or "[download]" in message)):
-            try:
-                # Prevent infinite recursion: Don't push if we're already in a push operation
-                if not self._recursion_guard:
-                    self._recursion_guard = True
-                    # Push to UI
-                    self.log_element.push(message)
-                    self._recursion_guard = False
-            except Exception:
+        if "\r" in message and ("%" in message or "ETA" in message or "[download]" in message):
+            return
+        
+        # Filter out token-level progress logs (keep only paragraph-level logs)
+        # Token-level logs are frequent updates that occur during streaming (per token/chunk)
+        # Paragraph-level logs are milestone events (start, completion, errors)
+        
+        is_token_level_log = False
+        
+        # Pattern 1: API streaming progress logs (token-level updates during streaming)
+        # Format: "[AI API] Progress: X chunks, Y chars..."
+        if "[AI API] Progress:" in message and ("chars" in message or "chars..." in message):
+            is_token_level_log = True
+        
+        # Pattern 2: Recursive chunk token-level progress updates during generation
+        # Format: "[Recursive Chunk X/Y] Reasoning: Y chars..." or "Content: X chars..."
+        # These are incremental updates during streaming
+        if "[Recursive Chunk" in message:
+            if (("Reasoning:" in message or "Content:" in message) and 
+                "chars" in message and "chars..." in message):
+                is_token_level_log = True
+        
+        # Pattern 3: AI API chunk content received logs (per-chunk updates during streaming)
+        # These are detailed token-level updates
+        if "[AI API] Chunk" in message:
+            if any(phrase in message for phrase in [
+                "Content received", 
+                "Reasoning content received", 
+                "Content treated as reasoning"
+            ]):
+                is_token_level_log = True
+        
+        # Skip token-level logs entirely for GUI terminal
+        # All logs are still printed to backend terminal (done above at line 153)
+        if is_token_level_log:
+            return
+        
+        # Keep paragraph-level logs (examples below will be shown in GUI):
+        # - "[AI API] Starting API call for: ..."
+        # - "[AI API] API call completed. Total chunks: ..."
+        # - "[AI API] Error during API call: ..."
+        # - "[Recursive Chunk X/Y] Starting AI summary generation..."
+        # - "[Recursive Chunk X] Summary generation completed..."
+        # - "[Recursive Chunk X] Final chunk_full_response length: ..." (completion summary)
+        # - "[Chunk X] Summary generation completed. Success: ..." (completion summary)
+        # - Any error or warning messages
+        
+        # Keep paragraph-level logs (API call start/end, chunk completion, errors, etc.)
+        # These are important for user visibility
+        # Examples:
+        # - "[AI API] Starting API call for: ..."
+        # - "[AI API] API call completed..."
+        # - "[Recursive Chunk X/Y] Starting AI summary generation..."
+        # - "[Recursive Chunk X] Summary generation completed..."
+        # - "[Chunk X] Summary generation completed..."
+        # - "[AI API] Error..."
+        # - Any error messages
+        
+        try:
+            # Prevent infinite recursion: Don't push if we're already in a push operation
+            if not self._recursion_guard:
+                self._recursion_guard = True
+                # Push to UI
+                self.log_element.push(message)
                 self._recursion_guard = False
-                pass  # Avoid errors if UI is disconnected
+        except Exception:
+            self._recursion_guard = False
+            pass  # Avoid errors if UI is disconnected
 
     def flush(self):
         # Use original stdout/stderr handles to avoid infinite recursion
@@ -266,6 +327,84 @@ async def async_vision(video_path, interval, output_dir):
     )
 
 
+def extract_toc_from_content(content):
+    """
+    从markdown内容中提取目录结构（H2和H3标题）
+    返回目录markdown格式的字符串，格式为：
+    ## 📑 目录
+    - [标题1](#标题1)
+    - [标题2](#标题2)
+      - [子标题2.1](#子标题2.1)
+    """
+    if not content:
+        return ""
+    
+    # 提取所有H2和H3标题
+    h2_pattern = r"^##\s+(.+?)$"
+    h3_pattern = r"^###\s+(.+?)$"
+    
+    lines = content.split('\n')
+    toc_items = []
+    current_h2 = None
+    
+    for line in lines:
+        h2_match = re.match(h2_pattern, line)
+        h3_match = re.match(h3_pattern, line)
+        
+        if h2_match:
+            title = h2_match.group(1).strip()
+            # 移除emoji和特殊字符以创建锚点
+            anchor = re.sub(r'[^\w\s-]', '', title).strip()
+            anchor = re.sub(r'[-\s]+', '-', anchor).lower()
+            # 如果标题包含emoji，保留在显示文本中
+            toc_items.append(('h2', title, anchor))
+            current_h2 = len(toc_items) - 1
+        elif h3_match:
+            title = h3_match.group(1).strip()
+            anchor = re.sub(r'[^\w\s-]', '', title).strip()
+            anchor = re.sub(r'[-\s]+', '-', anchor).lower()
+            toc_items.append(('h3', title, anchor))
+    
+    if not toc_items:
+        return ""
+    
+    # 生成目录markdown
+    toc_lines = ["## 📑 目录"]
+    for level, title, anchor in toc_items:
+        if level == 'h2':
+            toc_lines.append(f"- [{title}](#{anchor})")
+        elif level == 'h3':
+            toc_lines.append(f"  - [{title}](#{anchor})")
+    
+    return '\n'.join(toc_lines)
+
+def merge_tocs(existing_toc, new_toc):
+    """
+    合并两个目录，将新目录追加到现有目录后面
+    如果existing_toc为空，直接返回new_toc
+    """
+    if not existing_toc:
+        return new_toc
+    if not new_toc:
+        return existing_toc
+    
+    # 从existing_toc中提取除了"## 📑 目录"之外的所有行
+    existing_lines = existing_toc.split('\n')
+    existing_items = [line for line in existing_lines if line.strip() and not line.strip().startswith('## 📑')]
+    
+    # 从new_toc中提取目录项
+    new_lines = new_toc.split('\n')
+    new_items = [line for line in new_lines if line.strip() and not line.strip().startswith('## 📑')]
+    
+    # 合并
+    if existing_items and new_items:
+        merged_lines = ["## 📑 目录"] + existing_items + new_items
+        return '\n'.join(merged_lines)
+    elif existing_items:
+        return existing_toc
+    else:
+        return new_toc
+
 def split_transcript_into_chunks(segments, target_duration_minutes=15):
     """
     Split transcript into logical chunks based on content and target duration.
@@ -315,24 +454,36 @@ def split_transcript_into_chunks(segments, target_duration_minutes=15):
     
     return chunks
 
-async def process_chunk_recursively(chunk_index, total_chunks, chunk, dl_res, vision_frames, state, custom_prompt, complexity, chunk_context, step_ai, md_container, final_display_text, full_response, reasoning_exp, reasoning_label, task_id, assets_dir, processed_timestamps):
+async def process_chunk_recursively(chunk_index, total_chunks, chunk, dl_res, vision_frames, state, custom_prompt, complexity, chunk_context, step_ai, md_container, final_display_text, full_response, reasoning_exp, reasoning_label, task_id, assets_dir, processed_timestamps, accumulated_toc=""):
     """
     Recursively process a chunk, splitting it into smaller chunks if token limit is exceeded.
-    Returns (processed_successfully, chunk_full_response, chunk_full_reasoning, updated_final_display_text, updated_full_response)
+    Returns (processed_successfully, chunk_full_response, chunk_full_reasoning, updated_final_display_text, updated_full_response, chunk_toc)
+    
+    Args:
+        accumulated_toc: 前面所有分块累积的目录，用于指导当前分块的输出结构
     """
     # Build context from previous chunks
     context_prompt = ""
     if chunk_context:
-        context_prompt = f"\n\nPrevious chunk summaries for context:\n{chr(10).join(chunk_context)}\n\n"
+        context_prompt = f"\n\n前面部分的摘要内容（供参考上下文）：\n{chr(10).join(chunk_context)}\n\n"
+    
+    # 如果有累积的目录，添加到prompt中指导输出结构
+    toc_guidance = ""
+    if accumulated_toc:
+        toc_guidance = f"\n\n**重要：前面部分的目录结构如下，请参考这个结构和层级继续规划输出：**\n{accumulated_toc}\n\n请根据以上目录结构，在你负责的部分中继续使用相同的层级和编号规范，确保整体文档结构连贯一致。"
     
     # Initialize chunk-specific variables
     chunk_full_response = ""
     chunk_full_reasoning = ""
     
     # Generate summary for this chunk
-    print(f"[Recursive Chunk {chunk_index}] Starting AI summary generation...")
+    print(f"[Recursive Chunk {chunk_index}/{total_chunks}] Starting AI summary generation...")
     chunk_content_received = False
     chunk_reasoning_received = False
+    last_update_time = time.time()
+    update_log_interval = 3.0  # Log updates every 3 seconds
+    last_ui_update_time = time.time()
+    ui_update_interval = 0.5  # Update UI at most every 0.5 seconds to reduce connection load
     
     async for chunk_type, chunk_text in generate_summary_stream_async(
         f"{dl_res['title']} - Chunk {chunk_index}/{total_chunks}",
@@ -340,25 +491,50 @@ async def process_chunk_recursively(chunk_index, total_chunks, chunk, dl_res, vi
         chunk['segments'],
         vision_frames,
         state.config,
-        custom_prompt + f"\n\nThis is part {chunk_index} of {total_chunks} of a larger video. Please continue the numbering from previous sections if applicable. Focus on summarizing this specific chunk. Include key quotes and structured summary." + context_prompt,
+        custom_prompt + f"\n\n这是长视频的第 {chunk_index} 部分，共 {total_chunks} 部分。如果上一部分的最后一个章节编号是某个数字，请从此数字加1开始继续编号。专注于总结这一部分的具体内容。包含关键引用和结构化摘要。" + context_prompt + toc_guidance,
         complexity,
     ):
-        print(f"[Recursive Chunk {chunk_index}] Received chunk_type: {chunk_type}, text_length: {len(chunk_text)}")
+        # Remove detailed per-chunk logging to reduce connection load
+        current_time = time.time()
+        should_log_update = current_time - last_update_time >= update_log_interval
         
         if chunk_type == "reasoning":
             chunk_full_reasoning += chunk_text
             reasoning_exp.classes(remove="hidden")
-            reasoning_label.set_content(chunk_full_reasoning)
+            # Throttle UI updates for reasoning to reduce connection load
+            if current_time - last_ui_update_time >= ui_update_interval:
+                try:
+                    reasoning_label.set_content(chunk_full_reasoning)
+                    last_ui_update_time = current_time
+                except Exception:
+                    pass  # Ignore UI update errors to prevent connection issues
             chunk_reasoning_received = True
-            print(f"[Recursive Chunk {chunk_index}] Reasoning content updated, total length: {len(chunk_full_reasoning)}")
+            if should_log_update:
+                print(f"[Recursive Chunk {chunk_index}/{total_chunks}] Reasoning: {len(chunk_full_reasoning)} chars...")
+                last_update_time = current_time
         
         elif chunk_type == "content":
             chunk_full_response += chunk_text
             chunk_content_received = True
-            print(f"[Recursive Chunk {chunk_index}] Content received, chunk_full_response length: {len(chunk_full_response)}")
             
             # Combine all chunk summaries so far
-            current_full_response = full_response + ("\n\n---\n\n" if full_response else "") + chunk_full_response
+            # Add chunk separator with chunk number before new chunk content
+            # Check if this is the first content for this chunk (to avoid duplicate separators in recursive splits)
+            chunk_num_str = str(chunk_index).split('.')[0]  # Get main chunk number
+            separator = f"\n\n{'=' * 60}\n第 {chunk_num_str} 分块\n{'=' * 60}\n\n"
+            
+            if full_response:
+                # Check if the last content already has a separator for this chunk number
+                # This helps avoid duplicate separators when recursive splits occur
+                last_separator_pattern = f"第 {chunk_num_str} 分块"
+                if last_separator_pattern not in full_response[-500:]:  # Check last 500 chars to avoid false positives
+                    current_full_response = full_response + separator + chunk_full_response
+                else:
+                    # Already has separator, just add content with a simple line break
+                    current_full_response = full_response + "\n\n" + chunk_full_response
+            else:
+                # First chunk: add separator at the beginning
+                current_full_response = separator + chunk_full_response
             step_ai.props('caption="✍️ Writing report..."')
 
             # Image Logic Logic (Updated for assets_dir)
@@ -386,10 +562,18 @@ async def process_chunk_recursively(chunk_index, total_chunks, chunk, dl_res, vi
                             f"[{ts}]", f"[{ts}]\n\n![{ts}]({img_web_path})"
                         )
 
-            md_container.set_content(display_text)
+            # Throttle UI updates for content to reduce connection load
+            if current_time - last_ui_update_time >= ui_update_interval:
+                try:
+                    md_container.set_content(display_text)
+                    last_ui_update_time = current_time
+                except Exception:
+                    pass  # Ignore UI update errors to prevent connection issues
             # Store the final display_text for finalization
             final_display_text = display_text
-            print(f"[Recursive Chunk {chunk_index}] Display text updated, length: {len(display_text)}")
+            if should_log_update:
+                print(f"[Recursive Chunk {chunk_index}/{total_chunks}] Content: {len(chunk_full_response)} chars, display: {len(display_text)} chars...")
+                last_update_time = current_time
         
         elif chunk_type == "error":
             # Check if this is a token limit error
@@ -400,7 +584,7 @@ async def process_chunk_recursively(chunk_index, total_chunks, chunk, dl_res, vi
                 num_segments = len(chunk['segments'])
                 if num_segments <= 1:
                     print(f"[Recursive Chunk {chunk_index}] Cannot split further, using as is...")
-                    return False, "", "", final_display_text, full_response
+                    return False, "", "", final_display_text, full_response, ""
                 
                 # Split into two equal parts
                 mid_point = num_segments // 2
@@ -436,39 +620,47 @@ async def process_chunk_recursively(chunk_index, total_chunks, chunk, dl_res, vi
                 ]
                 
                 # Process first sub-chunk
-                success1, resp1, reason1, final_display_text, full_response = await process_chunk_recursively(
+                success1, resp1, reason1, final_display_text, full_response, toc1 = await process_chunk_recursively(
                     f"{chunk_index}.1", total_chunks, sub_chunk1, dl_res, sub_chunk1_vision_frames, state, 
                     custom_prompt, complexity, chunk_context, step_ai, md_container, final_display_text, full_response, 
-                    reasoning_exp, reasoning_label
+                    reasoning_exp, reasoning_label, task_id, assets_dir, processed_timestamps, accumulated_toc
                 )
                 
                 if success1 and resp1:
                     # Add to context for second sub-chunk
-                    chunk_context.append(f"Chunk {chunk_index}.1: {resp1[:100]}...")
+                    chunk_context.append(f"部分 {chunk_index}.1: {resp1[:100]}...")
                 
-                # Process second sub-chunk
-                success2, resp2, reason2, final_display_text, full_response = await process_chunk_recursively(
+                # Process second sub-chunk with accumulated TOC from first sub-chunk
+                accumulated_toc_after_sub1 = merge_tocs(accumulated_toc, toc1)
+                success2, resp2, reason2, final_display_text, full_response, toc2 = await process_chunk_recursively(
                     f"{chunk_index}.2", total_chunks, sub_chunk2, dl_res, sub_chunk2_vision_frames, state, 
                     custom_prompt, complexity, chunk_context, step_ai, md_container, final_display_text, full_response, 
-                    reasoning_exp, reasoning_label
+                    reasoning_exp, reasoning_label, task_id, assets_dir, processed_timestamps, accumulated_toc_after_sub1
                 )
                 
-                # Combine results
+                # Combine results and TOCs
                 if success1 or success2:
                     combined_response = resp1 + ("\n\n---\n\n" if resp1 and resp2 else "") + resp2
                     combined_reasoning = reason1 + ("\n\n---\n\n" if reason1 and reason2 else "") + reason2
-                    return True, combined_response, combined_reasoning, final_display_text, full_response
+                    combined_toc = merge_tocs(toc1, toc2)
+                    return True, combined_response, combined_reasoning, final_display_text, full_response, combined_toc
                 else:
-                    return False, "", "", final_display_text, full_response
+                    return False, "", "", final_display_text, full_response, ""
             else:
                 # Other error, return failure
                 print(f"[Recursive Chunk {chunk_index}] Non-token error occurred: {chunk_text}")
-                return False, "", "", final_display_text, full_response
+                return False, "", "", final_display_text, full_response, ""
     
     print(f"[Recursive Chunk {chunk_index}] Summary generation completed. Content received: {chunk_content_received}, Reasoning received: {chunk_reasoning_received}")
     print(f"[Recursive Chunk {chunk_index}] Final chunk_full_response length: {len(chunk_full_response)}")
     
-    return chunk_content_received, chunk_full_response, chunk_full_reasoning, final_display_text, full_response
+    # Extract TOC from chunk content (don't include in the actual response, just extract for reference)
+    chunk_toc = ""
+    if chunk_content_received and chunk_full_response:
+        chunk_toc = extract_toc_from_content(chunk_full_response)
+        print(f"[Recursive Chunk {chunk_index}] Extracted TOC: {len(chunk_toc)} chars")
+    
+    return chunk_content_received, chunk_full_response, chunk_full_reasoning, final_display_text, full_response, chunk_toc
 
 async def generate_summary_stream_async(
     title, full_text, segments, vision_frames, config, custom_prompt="", complexity=3
@@ -509,18 +701,40 @@ async def generate_summary_stream_async(
     # Check if this is a chunk summary
     is_chunk_summary = "Chunk" in title
     
-    if custom_prompt and custom_prompt.strip():
-        # Custom prompt is ADDED to base, not replacing it
-        system_prompt = f"""{base_identity}
+    # Build completely separate prompts for chunk mode vs non-chunk mode
+    if is_chunk_summary:
+        # Chunk mode: simplified prompt focused on partial content
+        if custom_prompt and custom_prompt.strip():
+            system_prompt = f"""{base_identity}
 
 {get_text("user_extra_requirement", state.config["ui_language"])}
 {custom_prompt.strip()}
 
-{get_text("output_complexity_requirement", state.config["ui_language"])}{complexity_instruction}"""
-    else:
-        system_prompt = f"""{base_identity}
+{get_text("output_complexity_requirement", state.config["ui_language"])}{complexity_instruction}
+
+{get_text("chunk_summary_requirements", state.config["ui_language"])}
+
+{language_style}"""
+        else:
+            system_prompt = f"""{base_identity}
 
 {get_text("output_complexity_requirement", state.config["ui_language"])}{complexity_instruction}
+
+{get_text("chunk_summary_requirements", state.config["ui_language"])}
+
+{language_style}"""
+    else:
+        # Non-chunk mode: full video summary with complete structure
+        if custom_prompt and custom_prompt.strip():
+            system_prompt = f"""{base_identity}
+
+{get_text("user_extra_requirement", state.config["ui_language"])}
+{custom_prompt.strip()}
+
+{get_text("output_complexity_requirement", state.config["ui_language"])}{complexity_instruction}
+
+{get_text("non_chunk_full_requirements", state.config["ui_language"])}
+
 {get_text("core_layout_requirements", state.config["ui_language"])}
 
 {get_text("the_one_liner", state.config["ui_language"])}
@@ -541,12 +755,35 @@ async def generate_summary_stream_async(
 {get_text("visual_evidence", state.config["ui_language"])}
 {get_text("visual_evidence_desc", state.config["ui_language"])}
 
-{language_style}
-    """
-    
-    # Add chunk-specific requirements if needed
-    if is_chunk_summary:
-        system_prompt += f"\n\n{get_text('chunk_summary_requirements', state.config['ui_language'])}"
+{language_style}"""
+        else:
+            system_prompt = f"""{base_identity}
+
+{get_text("output_complexity_requirement", state.config["ui_language"])}{complexity_instruction}
+
+{get_text("non_chunk_full_requirements", state.config["ui_language"])}
+
+{get_text("core_layout_requirements", state.config["ui_language"])}
+
+{get_text("the_one_liner", state.config["ui_language"])}
+{get_text("the_one_liner_desc", state.config["ui_language"])}
+
+{get_text("structured_toc", state.config["ui_language"])}
+{get_text("structured_toc_desc", state.config["ui_language"])}
+
+{get_text("structured_sections", state.config["ui_language"])}
+{get_text("structured_sections_desc", state.config["ui_language"])}
+
+{get_text("data_comparison", state.config["ui_language"])}
+{get_text("data_comparison_desc", state.config["ui_language"])}
+
+{get_text("math_formulas", state.config["ui_language"])}
+{get_text("math_formulas_desc", state.config["ui_language"])}
+
+{get_text("visual_evidence", state.config["ui_language"])}
+{get_text("visual_evidence_desc", state.config["ui_language"])}
+
+{language_style}"""
 
     user_content = []
     if config["enable_vision"] and vision_frames:
@@ -595,6 +832,8 @@ async def generate_summary_stream_async(
         chunk_count = 0
         total_content_length = 0
         total_reasoning_length = 0
+        last_log_time = time.time()
+        log_interval = 5.0  # Log progress every 5 seconds
         
         async for chunk in response:
             chunk_count += 1
@@ -605,17 +844,28 @@ async def generate_summary_stream_async(
             # For models that support reasoning_content (like OpenAI o1 series)
             if reasoning:
                 total_reasoning_length += len(reasoning)
-                print(f"[AI API] Chunk {chunk_count}: Reasoning content received, length: {len(reasoning)}")
+                # Only log progress periodically to reduce output
+                current_time = time.time()
+                if current_time - last_log_time >= log_interval:
+                    print(f"[AI API] Progress: {chunk_count} chunks, {total_reasoning_length} reasoning chars...")
+                    last_log_time = current_time
                 yield ("reasoning", reasoning)
             # For models that don't support reasoning_content, we'll use a portion of the content as thinking process
             elif content and "Thinking Process" in system_prompt:
                 # If this is a specialized thinking prompt, treat content as reasoning
                 total_reasoning_length += len(content)
-                print(f"[AI API] Chunk {chunk_count}: Content treated as reasoning, length: {len(content)}")
+                current_time = time.time()
+                if current_time - last_log_time >= log_interval:
+                    print(f"[AI API] Progress: {chunk_count} chunks, {total_reasoning_length} reasoning chars...")
+                    last_log_time = current_time
                 yield ("reasoning", content)
             elif content:
                 total_content_length += len(content)
-                print(f"[AI API] Chunk {chunk_count}: Content received, length: {len(content)}")
+                # Only log progress periodically to reduce output
+                current_time = time.time()
+                if current_time - last_log_time >= log_interval:
+                    print(f"[AI API] Progress: {chunk_count} chunks, {total_content_length} content chars...")
+                    last_log_time = current_time
                 yield ("content", content)
         
         print(f"[AI API] API call completed. Total chunks: {chunk_count}, Content length: {total_content_length}, Reasoning length: {total_reasoning_length}")
@@ -663,6 +913,72 @@ def index():
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
     <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.body);"></script>
+    <script>
+        // Function to re-render math formulas in dynamically updated content
+        function rerenderMath(element) {
+            if (typeof renderMathInElement !== 'undefined') {
+                if (element) {
+                    renderMathInElement(element, {
+                        delimiters: [
+                            {left: '$$', right: '$$', display: true},
+                            {left: '$', right: '$', display: false},
+                            {left: '\\[', right: '\\]', display: true},
+                            {left: '\\(', right: '\\)', display: false}
+                        ]
+                    });
+                } else {
+                    renderMathInElement(document.body, {
+                        delimiters: [
+                            {left: '$$', right: '$$', display: true},
+                            {left: '$', right: '$', display: false},
+                            {left: '\\[', right: '\\]', display: true},
+                            {left: '\\(', right: '\\)', display: false}
+                        ]
+                    });
+                }
+            }
+        }
+        // Use MutationObserver to automatically re-render math when content changes
+        if (typeof MutationObserver !== 'undefined') {
+            const observer = new MutationObserver(function(mutations) {
+                mutations.forEach(function(mutation) {
+                    if (mutation.addedNodes.length) {
+                        mutation.addedNodes.forEach(function(node) {
+                            if (node.nodeType === 1) { // Element node
+                                setTimeout(function() {
+                                    rerenderMath(node);
+                                }, 100);
+                            }
+                        });
+                    }
+                    if (mutation.type === 'childList' && mutation.target.classList) {
+                        if (mutation.target.classList.contains('prose') || 
+                            mutation.target.classList.contains('report-content') ||
+                            mutation.target.closest('.prose') ||
+                            mutation.target.closest('.report-content')) {
+                            setTimeout(function() {
+                                rerenderMath(mutation.target);
+                            }, 100);
+                        }
+                    }
+                });
+            });
+            // Start observing when DOM is ready
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', function() {
+                    observer.observe(document.body, {
+                        childList: true,
+                        subtree: true
+                    });
+                });
+            } else {
+                observer.observe(document.body, {
+                    childList: true,
+                    subtree: true
+                });
+            }
+        }
+    </script>
     <style>
         body {
             background-color: #FFFBFE; /* MD3 Background */
@@ -1367,7 +1683,7 @@ def index():
                     ui.separator().classes("mb-6")
 
                     # Summary Report
-                    ui.markdown(session.get("summary", "")).classes(
+                    ui.markdown(session.get("summary", ""), extras=['latex']).classes(
                         "w-full prose prose-lg prose-slate report-content max-w-none"
                     )
 
@@ -1512,7 +1828,7 @@ def index():
                                             "text-sm text-gray-800 whitespace-pre-wrap"
                                         )
                                 else:
-                                    ui.markdown(content).classes(
+                                    ui.markdown(content, extras=['latex']).classes(
                                         "text-sm text-gray-800 prose prose-sm max-w-none"
                                     )
 
@@ -1614,7 +1930,7 @@ def index():
                                     ui.label("AI").classes(
                                         "font-bold text-xs text-primary bg-purple-50 px-2 py-0.5 rounded-md self-start"
                                     )
-                                    streaming_md["ref"] = ui.markdown("▌").classes(
+                                    streaming_md["ref"] = ui.markdown("▌", extras=['latex']).classes(
                     "text-sm text-gray-800 prose prose-sm max-w-none"
                 )
                             chat_scroll.scroll_to(percent=1.0)
@@ -1811,6 +2127,22 @@ def index():
                     .props("outlined dense")
                     .classes("flex-grow")
                 )
+                
+                # Chunk Summary Toggle (below complexity selector)
+                with ui.row().classes("w-full items-center gap-2 mt-2"):
+                    chunk_summary_toggle = (
+                        ui.checkbox(
+                            get_text("enable_chunk_summary", state.config["ui_language"]),
+                            value=state.config.get("enable_chunk_summary", False)
+                        )
+                        .on("update:model-value", lambda e: (
+                            state.config.update({"enable_chunk_summary": e.args}),
+                            save_config(state.config)
+                        ))
+                    )
+                    ui.label(
+                        get_text("chunk_summary_hint", state.config["ui_language"])
+                    ).classes("text-xs text-gray-600")
 
             # Advanced Options Row
             with ui.expansion(
@@ -1842,7 +2174,8 @@ def index():
                             custom_prompt_input.value,
                             complexity_select.value,
                             local_file_path=selected_local_file["path"],
-                            pre_task_id=selected_local_file["task_id"]
+                            pre_task_id=selected_local_file["task_id"],
+                            enable_chunk_summary=chunk_summary_toggle.value
                         ),
                     )
                     .props("unelevated color=primary size=lg")
@@ -1938,7 +2271,7 @@ def index():
         def clean_ansi(text):
             return ansi_escape_pattern.sub("", str(text) if text else "")
 
-        async def run_analysis(url, custom_prompt="", complexity=3, local_file_path=None, pre_task_id=None):
+        async def run_analysis(url, custom_prompt="", complexity=3, local_file_path=None, pre_task_id=None, enable_chunk_summary=False):
             if not url and not local_file_path:
                 ui.notify("Please enter a URL or upload a file", type="warning")
                 return
@@ -2123,37 +2456,24 @@ def index():
                     lbl_ts = ui.label("Processing Audio...").classes(
                         "text-grey-6 italic"
                     )
-                    
-                    # Add real-time transcript display in stepper
-                stepper_transcript_expander = ui.expansion(
-                    get_text("transcript_label", state.config["ui_language"]), icon="description"
-                ).classes("w-full mt-4 bg-blue-50 rounded")
-                with stepper_transcript_expander:
-                    stepper_transcript_label = ui.markdown().classes(
-                        "text-sm text-blue-800 p-2 max-w-full break-words whitespace-pre-wrap overflow-auto max-h-[30vh]"
-                    )
 
                 # Don't show transcript card during transcription - will show after AI starts
 
                 # Define progress callback for real-time updates
+                last_transcript_update = 0
                 def transcript_progress_callback(transcript):
+                    nonlocal last_transcript_update
+                    current_time = time.time()
+                    
+                    # Throttle updates to once every 1.0 seconds to prevent websocket timeout
+                    if current_time - last_transcript_update < 1.0:
+                        return
+                    last_transcript_update = current_time
+
                     def _update_ts():
-                        # Update stepper transcript
-                        stepper_transcript_label.set_content(transcript)
-                        # Update main page transcript
+                        # Update main page transcript only (removed stepper transcript update)
                         transcript_label.set_content(transcript)
-                        # Update history record with partial transcript
-                        sessions = load_history()
-                        for s in sessions:
-                            if s["id"] == task_id:
-                                s["transcript"] = transcript
-                                save_history(sessions)
-                                # Refresh history list to show updated transcript
-                                if 'history_list' in globals():
-                                    history_list.refresh()
-                                elif 'history_list' in locals():
-                                    locals()['history_list'].refresh()
-                                break
+                        # Note: We do NOT save history here to avoid IO blocking
                     queue_ui_update(_update_ts)
 
                 segments = await async_transcribe(
@@ -2223,67 +2543,106 @@ def index():
                     print("Client disconnected during UI update.")
                     return
 
-                # Split transcript into chunks
-                chunks = split_transcript_into_chunks(segments, target_duration_minutes=15)
-                chunk_summaries = []
+                # Decide whether to use chunk processing based on user setting
                 full_reasoning = ""
                 processed_timestamps = set()
-
-                # Process each chunk
-                chunk_context = []
-                chunk_briefs = []
                 full_response = ""
                 final_display_text = ""
                 
-                for i, chunk in enumerate(chunks, 1):
-                    step_ai.props(f'caption="Processing Chunk {i}/{len(chunks)}..."')
+                if enable_chunk_summary:
+                    # Chunk processing mode
+                    chunks = split_transcript_into_chunks(segments, target_duration_minutes=15)
+                    chunk_summaries = []
+                    chunk_context = []
+                    chunk_briefs = []
+                    accumulated_toc = ""  # 累积的目录，传递给每个分块
                     
-                    # Get only vision frames that fall within this chunk's time range
-                    chunk_start_time = chunk['start_time']
-                    chunk_end_time = chunk['end_time']
-                    chunk_vision_frames = [
-                        frame for frame in vision_frames 
-                        if chunk_start_time <= frame['timestamp'] <= chunk_end_time
-                    ]
-                    
-                    # Process chunk recursively
-                    success, chunk_full_response, chunk_full_reasoning, final_display_text, _ = await process_chunk_recursively(
-                        i, len(chunks), chunk, dl_res, chunk_vision_frames, state, custom_prompt, complexity, 
-                        chunk_context, step_ai, md_container, final_display_text, full_response, 
-                        reasoning_exp, reasoning_label, task_id, assets_dir, processed_timestamps
-                    )
-                    
-                    print(f"[Chunk {i}] Summary generation completed. Success: {success}, Response length: {len(chunk_full_response)}")
-                    
-                    # Add completed chunk to context if successful
-                    if success and chunk_full_response:
-                        # Extract structured brief for context and TOC
-                        # 1. Try to find the One-Liner (Blockquote)
-                        one_liner_match = re.search(r"^>\s*(.*?)(?:\n|$)", chunk_full_response, re.MULTILINE)
-                        one_liner = one_liner_match.group(1).strip() if one_liner_match else ""
+                    # Process each chunk
+                    for i, chunk in enumerate(chunks, 1):
+                        # Add a small delay between chunks to prevent connection overload
+                        if i > 1:
+                            await asyncio.sleep(0.3)  # 300ms delay between chunks
                         
-                        # 2. Extract all H2/H3 headers to capture topics
-                        headers = re.findall(r"^(?:##|###)\s+(.*)", chunk_full_response, re.MULTILINE)
-                        headers_text = "\n".join([f"- {h}" for h in headers])
+                        step_ai.props(f'caption="正在处理第 {i}/{len(chunks)} 部分..."')
                         
-                        # 3. Construct Brief
-                        if one_liner or headers:
-                            brief = f"{one_liner}\n\nKey Topics:\n{headers_text}"
+                        # Get only vision frames that fall within this chunk's time range
+                        chunk_start_time = chunk['start_time']
+                        chunk_end_time = chunk['end_time']
+                        chunk_vision_frames = [
+                            frame for frame in vision_frames 
+                            if chunk_start_time <= frame['timestamp'] <= chunk_end_time
+                        ]
+                        
+                        # Process chunk recursively with accumulated TOC
+                        success, chunk_full_response, chunk_full_reasoning, final_display_text, _, chunk_toc = await process_chunk_recursively(
+                            i, len(chunks), chunk, dl_res, chunk_vision_frames, state, custom_prompt, complexity, 
+                            chunk_context, step_ai, md_container, final_display_text, full_response, 
+                            reasoning_exp, reasoning_label, task_id, assets_dir, processed_timestamps, accumulated_toc
+                        )
+                        
+                        # Merge the TOC from this chunk into accumulated TOC
+                        if chunk_toc:
+                            accumulated_toc = merge_tocs(accumulated_toc, chunk_toc)
+                            print(f"[Chunk {i}] Accumulated TOC length: {len(accumulated_toc)} chars")
+                        
+                        print(f"[Chunk {i}] Summary generation completed. Success: {success}, Response length: {len(chunk_full_response)}")
+                        
+                        # Enhanced robustness for the last chunk: longer delay and multiple UI updates
+                        is_last_chunk = i == len(chunks)
+                        if is_last_chunk:
+                            # For last chunk, add longer delay and ensure UI is fully updated
+                            try:
+                                md_container.set_content(final_display_text)
+                                await asyncio.sleep(0.5)  # Longer delay for last chunk (500ms)
+                                # Second UI update to ensure it's rendered
+                                md_container.set_content(final_display_text)
+                                await asyncio.sleep(0.2)  # Additional delay
+                            except Exception:
+                                pass  # Ignore UI update errors
                         else:
-                            brief = chunk_full_response[:500] + "..."
-                            
-                        chunk_context.append(f"Chunk {i} Summary:\n{brief}")
-                        chunk_briefs.append(f"Chunk {i} Summary:\n{brief}")
+                            # For non-last chunks, shorter delay
+                            try:
+                                md_container.set_content(final_display_text)
+                                await asyncio.sleep(0.1)  # Small delay after UI update
+                            except Exception:
+                                pass  # Ignore UI update errors
                         
-                        # Update full_response with the new chunk content
-                        full_response += ("\n\n---\n\n" if full_response else "") + chunk_full_response
-                    
-                    # Update progress in history records
-                    update_progress(task_id, "AI Analysis", f"Chunk {i}/{len(chunks)} complete")
+                        # Add completed chunk to context if successful
+                        if success and chunk_full_response:
+                            # Extract structured brief for context and TOC
+                            # 1. Try to find the One-Liner (Blockquote)
+                            one_liner_match = re.search(r"^>\s*(.*?)(?:\n|$)", chunk_full_response, re.MULTILINE)
+                            one_liner = one_liner_match.group(1).strip() if one_liner_match else ""
+                            
+                            # 2. Extract all H2/H3 headers to capture topics
+                            headers = re.findall(r"^(?:##|###)\s+(.*)", chunk_full_response, re.MULTILINE)
+                            headers_text = "\n".join([f"- {h}" for h in headers])
+                            
+                            # 3. Construct Brief
+                            if one_liner or headers:
+                                brief = f"{one_liner}\n\nKey Topics:\n{headers_text}"
+                            else:
+                                brief = chunk_full_response[:500] + "..."
+                                
+                            chunk_context.append(f"部分 {i} 摘要:\n{brief}")
+                            chunk_briefs.append(f"Chunk {i} Summary:\n{brief}")
+                            
+                            # Update full_response with the new chunk content
+                            # Add chunk separator with chunk number before new chunk content
+                            if full_response:
+                                separator = f"\n\n{'=' * 60}\n第 {i} 分块\n{'=' * 60}\n\n"
+                                full_response += separator + chunk_full_response
+                            else:
+                                # First chunk: add separator at the beginning
+                                separator = f"{'=' * 60}\n第 {i} 分块\n{'=' * 60}\n\n"
+                                full_response = separator + chunk_full_response
+                        
+                        # Update progress in history records
+                        update_progress(task_id, "AI Analysis", f"Chunk {i}/{len(chunks)} complete")
 
-                # Generate final summary from all chunk summaries
-                if len(chunks) > 1:
-                    step_ai.props('caption="Generating Final Summary..."')
+                    # Generate final summary from all chunk summaries
+                    if len(chunks) > 1:
+                        step_ai.props('caption="Generating Final Summary..."')
                     final_summary_prompt = f"""
                     Please provide a comprehensive final summary of this video based on the following chunk summaries:
                     
@@ -2300,59 +2659,143 @@ def index():
                     # Store the content before final summary
                     content_before_final = full_response
                     
-                    async for chunk_type, chunk_text in generate_summary_stream_async(
-                        f"{dl_res['title']} - Final Summary",
-                        final_summary_prompt,
-                        [],
-                        [],  # No vision frames for final summary to avoid token limit
-                        state.config,
-                        custom_prompt,
-                        complexity,
-                    ):
-                        if chunk_type == "content":
-                            # Accumulate final summary text
-                            final_summary_text += chunk_text
-                            # Append final summary to the end instead of prepending
-                            full_response = f"{content_before_final}\n\n---\n\n# Final Summary\n\n{final_summary_text}"
-                            md_container.set_content(full_response)
-                            # 确保最终总结被正确保存到 final_display_text
-                            final_display_text = full_response
+                    # Add UI update throttling for final summary generation
+                    last_ui_update_time = time.time()
+                    ui_update_interval = 0.5  # Update UI at most every 0.5 seconds
+                    
+                    try:
+                        async for chunk_type, chunk_text in generate_summary_stream_async(
+                            f"{dl_res['title']} - Final Summary",
+                            final_summary_prompt,
+                            [],
+                            [],  # No vision frames for final summary to avoid token limit
+                            state.config,
+                            custom_prompt,
+                            complexity,
+                        ):
+                            if chunk_type == "content":
+                                # Accumulate final summary text
+                                final_summary_text += chunk_text
+                                # Append final summary to the end instead of prepending
+                                full_response = f"{content_before_final}\n\n---\n\n# Final Summary\n\n{final_summary_text}"
+                                
+                                # Throttle UI updates to prevent connection loss
+                                current_time = time.time()
+                                if current_time - last_ui_update_time >= ui_update_interval:
+                                    try:
+                                        md_container.set_content(full_response)
+                                        last_ui_update_time = current_time
+                                    except Exception as e:
+                                        print(f"UI update error during final summary: {e}")
+                                        pass  # Ignore UI update errors to prevent connection issues
+                                
+                                # 确保最终总结被正确保存到 final_display_text
+                                final_display_text = full_response
+                        
+                        # Final UI update after generation completes
+                        try:
+                            md_container.set_content(final_display_text)
+                            await asyncio.sleep(0.1)  # Small delay to ensure UI update
+                        except Exception as e:
+                            print(f"Final UI update error: {e}")
+                            pass
+                    except Exception as e:
+                        print(f"Error generating final summary: {e}")
+                        # Continue execution even if final summary fails
+                        pass
 
-                # Generate Table of Contents
-                if len(chunks) > 1:
-                    step_ai.props('caption="Generating Table of Contents..."')
-                    toc_prompt = f"""
-                    Based on the following brief summaries of the video parts, please generate a concise Table of Contents (TOC) for the final report.
-                    The TOC should list the main sections/topics covered in each chunk.
-                    
-                    Brief Summaries:
-                    {chr(10).join(chunk_briefs)}
-                    
-                    Format:
-                    # Table of Contents
-                    - [Section Title]
-                    - [Section Title]
-                    ...
-                    """
-                    
-                    toc_text = ""
+                # Use accumulated TOC instead of generating a new one
+                if len(chunks) > 1 and accumulated_toc:
+                    step_ai.props('caption="Preparing final report with TOC..."')
                     content_before_toc = full_response
+                    # Prepend accumulated TOC to the beginning
+                    full_response = f"{accumulated_toc}\n\n---\n\n{content_before_toc}"
+                    final_display_text = full_response
+                    
+                    try:
+                        md_container.set_content(final_display_text)
+                        await asyncio.sleep(0.1)  # Small delay to ensure UI update
+                    except Exception as e:
+                        print(f"Error updating UI with accumulated TOC: {e}")
+                        pass
+                else:
+                    # Non-chunk mode: process entire video at once
+                    step_ai.props('caption="✍️ Generating summary..."')
+                    transcript_text = " ".join([s["text"] for s in segments])
+                    
+                    # Process image timestamps for non-chunk mode
+                    last_ui_update_time = time.time()
+                    ui_update_interval = 0.5  # Update UI at most every 0.5 seconds
                     
                     async for chunk_type, chunk_text in generate_summary_stream_async(
-                        f"{dl_res['title']} - TOC",
-                        toc_prompt,
-                        [],
-                        [],
+                        dl_res["title"],
+                        transcript_text,
+                        segments,
+                        vision_frames,
                         state.config,
                         custom_prompt,
                         complexity,
                     ):
-                        if chunk_type == "content":
-                            toc_text += chunk_text
-                            # Prepend TOC to the beginning
-                            full_response = f"{toc_text}\n\n---\n\n{content_before_toc}"
-                            md_container.set_content(full_response)
-                            final_display_text = full_response
+                        current_time = time.time()
+                        
+                        if chunk_type == "reasoning":
+                            full_reasoning += chunk_text
+                            reasoning_exp.classes(remove="hidden")
+                            # Throttle UI updates for reasoning
+                            if current_time - last_ui_update_time >= ui_update_interval:
+                                try:
+                                    reasoning_label.set_content(full_reasoning)
+                                    last_ui_update_time = current_time
+                                except Exception:
+                                    pass
+                        
+                        elif chunk_type == "content":
+                            full_response += chunk_text
+                            
+                            # Process timestamps and images
+                            display_text = full_response
+                            timestamps = re.findall(r"\[(\d{1,2}:\d{2})\]", display_text)
+                            for ts in timestamps:
+                                seconds = timestamp_str_to_seconds(ts)
+                                img_filename = f"frame_{seconds}.jpg"
+                                img_fs_path = os.path.join(assets_dir, img_filename)
+                                img_web_path = f"/generate/{task_id}/assets/{img_filename}"
+                                
+                                if ts not in processed_timestamps:
+                                    if not os.path.exists(img_fs_path):
+                                        await run.io_bound(
+                                            extract_frame,
+                                            dl_res["video_path"],
+                                            seconds,
+                                            img_fs_path,
+                                        )
+                                    processed_timestamps.add(ts)
+                                
+                                if os.path.exists(img_fs_path):
+                                    if f"![{ts}]" not in display_text:
+                                        display_text = display_text.replace(
+                                            f"[{ts}]", f"[{ts}]\n\n![{ts}]({img_web_path})"
+                                        )
+                            
+                            # Throttle UI updates for content
+                            if current_time - last_ui_update_time >= ui_update_interval:
+                                try:
+                                    md_container.set_content(display_text)
+                                    last_ui_update_time = current_time
+                                except Exception:
+                                    pass
+                            
+                            final_display_text = display_text
+                        
+                        elif chunk_type == "error":
+                            print(f"[Error] {chunk_text}")
+                    
+                    # Final UI update for non-chunk mode with delay for robustness
+                    try:
+                        md_container.set_content(final_display_text)
+                        await asyncio.sleep(0.3)  # Delay to ensure UI is updated
+                    except Exception:
+                        pass
 
                 # Clear AI step spinner and label
                 ai_spinner.delete()
@@ -2586,3 +3029,4 @@ if __name__ in {"__main__", "__mp_main__"}:
         storage_secret=args.secret,
         favicon="🚀",
     )
+
