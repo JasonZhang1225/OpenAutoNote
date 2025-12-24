@@ -305,6 +305,205 @@ TRANSLATIONS = {
         "zh": "Apple Silicon (mlx-whisper)",
         "en": "Apple Silicon (mlx-whisper)",
     },
+    # --- Chunked Summary System ---
+    "chunk_first_content": {
+        "zh": """### 分块总结要求（第 {chunk_idx}/{total_chunks} 部分）
+
+**重要说明**：这是分段处理模式的第 {chunk_idx} 部分（共 {total_chunks} 部分）。这是第一部分的正式输出。
+
+你的输出**只应当包含**各级标题和各级内容，**绝不应该**包含多余的描述、总结、版权声明、免责声明或思考过程说明。思考过程应通过推理功能输出，而不是在正文中。
+
+请严格遵循以下格式要求（Markdown格式）：
+- 一句话核心观点（使用引用格式 `> `）
+- 二级标题 (`##`) 划分主要模块
+- 三级标题 (`###`) 划分子模块
+- 四级标题 (`####`) 划分更细的子模块
+- 如果出现编号，确保编号连续且不重复
+- **严禁**在输出开头或结尾添加任何多余内容""",
+        "en": """### Chunk Summary Requirements (Part {chunk_idx}/{total_chunks})
+
+**Important**: This is Part {chunk_idx} of {total_chunks} in chunked processing mode. This is the formal output for the first part.
+
+Your output **should only contain** headings and content at all levels, **should NOT** contain extra descriptions, summaries, copyright notices, disclaimers, or explanations about thinking process. Thinking process should be output through reasoning function, not in the main text.
+
+Please strictly follow the format requirements (Markdown format):
+- One-sentence core point (using quote format `> `)
+- Level-2 headings (`##`) for main modules
+- Level-3 headings (`###`) for sub-modules
+- Level-4 headings (`####`) for finer sub-modules
+- If using numbering, ensure continuous and non-repeating
+- **STRICTLY FORBIDDEN** to add any extra content at the beginning or end""",
+    },
+    "chunk_first_abstract": {
+        "zh": """### 第 {chunk_idx} 部分摘要
+
+请提取第 {chunk_idx} 部分总结内容的**大纲**（各级标题）和**简要总结**（100字以内）。
+
+**输出格式**：
+```
+## [第 {chunk_idx} 部分标题]
+
+> 一句话概括本部分核心内容
+
+- 关键主题1
+- 关键主题2
+- ...
+```
+
+这份摘要将会传给第 {chunk_idx_plus_1} 部分的总结者，让他们知道前面的内容、结构和格式。""",
+        "en": """### Part {chunk_idx} Abstract
+
+Please extract the **outline** (all headings) and **brief summary** (within 100 characters) of Part {chunk_idx}'s summary content.
+
+**Output Format**:
+```
+## [Part {chunk_idx} Title]
+
+> One-sentence summary of this part's core content
+
+- Key topic 1
+- Key topic 2
+- ...
+```
+
+This abstract will be passed to Part {chunk_idx_plus_1}'s summarizer to let them know the previous content, structure, and format.""",
+    },
+    "chunk_n_content": {
+        "zh": """### 分块总结要求（第 {chunk_idx}/{total_chunks} 部分）
+
+**重要说明**：这是分段处理模式的第 {chunk_idx} 部分。你的输入包含了前 {prev_chunk_count} 个板块的内容摘要。
+
+你的输出**只应当包含**各级标题和各级内容，**绝不应该**包含多余的描述、总结、版权声明、免责声明或思考过程说明。思考过程应通过推理功能输出，而不是在正文中。
+
+**前面部分的摘要**：
+```
+{prev_abstracts}
+```
+
+请严格遵循目录和格式，继续编号和输出。确保与前面部分的结构连贯一致。""",
+        "en": """### Chunk Summary Requirements (Part {chunk_idx}/{total_chunks})
+
+**Important**: This is Part {chunk_idx} of {total_chunks} in chunked processing mode. Your input includes abstracts from the first {prev_chunk_count} sections.
+
+Your output **should only contain** headings and content at all levels, **should NOT** contain extra descriptions, summaries, copyright notices, disclaimers, or explanations about thinking process. Thinking process should be output through reasoning function, not in the main text.
+
+**Previous Sections' Abstracts**:
+```
+{prev_abstracts}
+```
+
+Please strictly follow the directory and format, continue numbering and output. Ensure structural continuity with previous sections.""",
+    },
+    "chunk_n_abstract": {
+        "zh": """### 第 {chunk_idx} 部分摘要
+
+请提取第 {chunk_idx} 部分总结内容的**大纲**（各级标题）和**简要总结**（100字以内）。
+
+**前面部分的摘要**：
+```
+{prev_abstracts}
+```
+
+**输出格式**：
+```
+## [第 {chunk_idx} 部分标题]
+
+> 一句话概括本部分核心内容
+
+- 关键主题1
+- 关键主题2
+- ...
+```
+
+这份摘要将累积并传给后面的部分，让后面的前面的总结者知道所有内容、结构和格式。""",
+        "en": """### Part {chunk_idx} Abstract
+
+Please extract the **outline** (all headings) and **brief summary** (within 100 characters) of Part {chunk_idx}'s summary content.
+
+**Previous Sections' Abstracts**:
+```
+{prev_abstracts}
+```
+
+**Output Format**:
+```
+## [Part {chunk_idx} Title]
+
+> One-sentence summary of this part's core content
+
+- Key topic 1
+- Key topic 2
+- ...
+```
+
+This abstract will accumulate and be passed to subsequent sections, letting later summarizers know all previous content, structure, and format.""",
+    },
+    "final_summary_prompt": {
+        "zh": """### 最终总结要求
+
+现在你已经得到了这篇文章所有部分的内容摘要。请根据以下所有部分的摘要，生成最终的**目录**和**100字以内的内容梗概**。
+
+**所有部分的摘要**：
+```
+{full_abstracts}
+```
+
+**输出格式**（放入 contents.md，贴在总结报告最前面）：
+```
+# 目录
+
+## 1. [第一部分标题]
+> 一句话梗概
+
+## 2. [第二部分标题]
+> 一句话梗概
+
+...
+
+## 100字以内内容梗概：
+[梗概内容]
+```""",
+        "en": """### Final Summary Requirements
+
+Now you have the abstracts of all sections of this article. Based on the following abstracts of all sections, please generate the final **Table of Contents** and **Content Synopsis (within 100 characters)**.
+
+**All Sections' Abstracts**:
+```
+{full_abstracts}
+```
+
+**Output Format** (put in contents.md, at the very beginning of the summary report):
+```
+# Table of Contents
+
+## 1. [First Section Title]
+> One-sentence synopsis
+
+## 2. [Second Section Title]
+> One-sentence synopsis
+
+...
+
+## Content Synopsis (within 100 characters):
+[Synopsis content]
+```""",
+    },
+    "chunk_separator": {
+        "zh": "第 {idx} 分块",
+        "en": "Chunk {idx}",
+    },
+    "btn_test_api": {
+        "zh": "测试API连通性",
+        "en": "Test API Connectivity",
+    },
+    "lbl_deep_thinking": {
+        "zh": "深度思考模式",
+        "en": "Deep Thinking Mode",
+    },
+    "deep_thinking_desc": {
+        "zh": "启用后AI将进行更深入的分析和推理",
+        "en": "When enabled, AI will perform deeper analysis and reasoning",
+    },
 }
 
 

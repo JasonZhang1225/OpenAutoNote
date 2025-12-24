@@ -143,14 +143,10 @@ jobs:
           if [ "${{ matrix.variant }}" == "cpu" ]; then
             pip install -r python-core/requirements_win_cpu.txt
           else
-            # For CUDA variant, install dependencies but NOT torch (will be downloaded at runtime)
-            # Install faster-whisper and ctranslate2 which are smaller
-            pip install nicegui yt-dlp openai pyinstaller faster-whisper psutil opencv-python-headless huggingface_hub numpy latex2mathml
-            pip install --extra-index-url https://download.pytorch.org/whl/cu121 ctranslate2==4.5.0
-            # Ensure CUDA-enabled faster-whisper stack
-            pip install --force-reinstall "faster-whisper==1.1.0"
+            pip install -r python-core/requirements_win_cuda.txt
+            # Ensure CUDA-enabled faster-whisper stack (cu121)
+            pip install --force-reinstall "faster-whisper==1.1.0" "ctranslate2==4.5.0"
             python -c "import pathlib, ctranslate2; root = pathlib.Path(ctranslate2.__file__).parent / 'lib'; libs = list(root.glob('*.dll')); print(f'[DEBUG] ctranslate2 lib dir: {root}'); print(f'[DEBUG] DLL count: {len(libs)}'); [print(f'  {p.name}') for p in libs[:10]]"
-            echo "[INFO] torch will NOT be installed here - will be downloaded at runtime based on CUDA version"
           fi
 
       - name: Build Python Sidecar
@@ -159,25 +155,20 @@ jobs:
           set -e  # Exit on any error
           cd python-core
           PYI_EXTRA=""
-          # For CUDA variant, exclude torch to reduce size - will be downloaded at runtime
           if [ "${{ matrix.variant }}" = "cuda" ]; then
-            PYI_EXTRA="--exclude-module torch --collect-binaries ctranslate2 --collect-binaries faster_whisper"
-            echo "=== Building CUDA variant WITHOUT torch (will download at runtime) ==="
-          else
             PYI_EXTRA="--collect-binaries torch --collect-binaries ctranslate2 --collect-binaries faster_whisper"
-            echo "=== Building CPU variant WITH torch ==="
           fi
           
           echo "=== Starting PyInstaller build for ${{ matrix.variant }} ==="
           pyinstaller -F main.py --name api-server \
             --hidden-import=psutil \
             --hidden-import=cv2 \
-            --exclude-module torchaudio \
             --collect-all nicegui \
             --collect-all openai \
             --collect-all cv2 \
             --collect-all faster_whisper \
             --collect-all ctranslate2 \
+            --collect-all torch \
             $PYI_EXTRA
           
           echo "=== PyInstaller finished. Checking output ==="
@@ -206,13 +197,8 @@ jobs:
           VERSION=${TAURI_APP_VERSION:-1.0.0}
           python -c "import json, pathlib, os; p=pathlib.Path('src-tauri/tauri.conf.json'); d=json.loads(p.read_text()); d['version']=os.environ.get('TAURI_APP_VERSION', d.get('version','1.0.0')); p.write_text(json.dumps(d, indent=4))"
           npm install
-          # For CUDA variant, use msi (more reliable than nsis for large files)
-          # For CPU variant, use NSIS installer
-          if [ "${{ matrix.variant }}" == "cuda" ]; then
-            npm run tauri build -- --bundles msi
-          else
-            npm run tauri build -- --bundles nsis
-          fi
+          # NSIS is the supported Windows bundle; compression is disabled in tauri.conf for large CUDA sidecar
+          npm run tauri build -- --bundles nsis
         env:
           TAURI_APP_VERSION: ${{ env.TAURI_APP_VERSION }}
           TAURI_BUNDLE_VERSION: ${{ env.TAURI_BUNDLE_VERSION }}
@@ -222,11 +208,9 @@ jobs:
         run: |
           VERSION=${TAURI_BUNDLE_VERSION:-${GITHUB_REF_NAME#refs/tags/}}
           if [ "${{ matrix.variant }}" == "cuda" ]; then
-            # CUDA version uses MSI installer (torch will be downloaded at runtime)
-            OUT="OpenAutoNote_${VERSION}_Windows_${{ matrix.variant }}_Setup.msi"
-            mv src-tauri/target/release/bundle/msi/*.msi "$OUT" || true
+            OUT="OpenAutoNote_${VERSION}_Windows_${{ matrix.variant }}.exe"
+            mv src-tauri/target/release/open-auto-note.exe "$OUT" || true
           else
-            # CPU version uses NSIS installer
             OUT="OpenAutoNote_${VERSION}_Windows_${{ matrix.variant }}_Setup.exe"
             mv src-tauri/target/release/bundle/nsis/*.exe "$OUT" || true
           fi

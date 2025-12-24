@@ -5,6 +5,42 @@ import asyncio
 import time
 from nicegui import ui, run, app
 import sys
+import logging
+
+from core.prompts import get_prompt, get_normal_prompt, get_chunk_prompt
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Retry decorator for API calls
+async def retry_async(func, max_retries=3, initial_delay=1, backoff_factor=2, exceptions=(Exception,)):
+    """
+    Async retry decorator with exponential backoff
+    
+    Args:
+        func: Async function to retry
+        max_retries: Maximum number of retries
+        initial_delay: Initial delay in seconds
+        backoff_factor: Backoff factor for exponential delay
+        exceptions: Tuple of exception types to retry on
+    
+    Returns:
+        Result of the function call
+    """
+    retry_count = 0
+    while retry_count <= max_retries:
+        try:
+            return await func()
+        except exceptions as e:
+            retry_count += 1
+            if retry_count > max_retries:
+                logger.error(f"Failed after {max_retries} retries: {e}")
+                raise
+            
+            delay = initial_delay * (backoff_factor ** (retry_count - 1))
+            logger.info(f"Retrying in {delay:.2f} seconds... (Attempt {retry_count}/{max_retries})")
+            await asyncio.sleep(delay)
 
 # Get the directory where this script is located
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -18,7 +54,7 @@ from core.downloader import download_video
 from core.transcriber import TranscriberFactory
 from core.visual_processor import process_video_for_vision, extract_frame
 from core import model_manager
-from core.torch_manager import check_torch_cuda_installed, install_torch_cuda, detect_cuda_version
+from core.torch_manager import check_torch_cuda_installed, install_torch_cuda, detect_cuda_version, get_torch_install_status
 from core.utils import (
     build_multimodal_payload,
     timestamp_str_to_seconds,
@@ -58,7 +94,10 @@ DEFAULT_CONFIG = {
     "cookies_yt": "",
     "cookies_bili": "",
     "use_china_mirror": False,
-    "enable_chunk_summary": False,  # Default to False, user can enable for long videos
+    "enable_chunk_summary": False,
+    "deep_thinking": False,
+    "first_launch_completed": False,
+    "remind_gpu_install": True,
 }
 
 # --- Hardware Detection ---
@@ -94,6 +133,57 @@ hardware_info = detect_hardware()
 
 # Default to the detected hardware for transcription (mlx on macOS, cuda if available on Windows, else cpu)
 DEFAULT_CONFIG["hardware_mode"] = hardware_info["type"]
+
+
+def check_first_launch_gpu_reminder():
+    """Check first launch and show GPU installation reminder if needed"""
+    if not state.config.get("first_launch_completed", False):
+        try:
+            cuda_version = detect_cuda_version()
+            torch_status = get_torch_install_status()
+
+            needs_reminder = (
+                cuda_version is not None and
+                not torch_status["cuda_available"] and
+                state.config.get("remind_gpu_install", True)
+            )
+
+            if needs_reminder:
+                with ui.dialog() as dialog, ui.card().classes("w-[500px] max-w-full"):
+                    ui.label("🚀 开启 GPU 加速").classes("text-xl font-bold text-primary mb-4")
+                    ui.label(f"检测到您的系统安装了 NVIDIA {cuda_version} 显卡，但尚未安装支持 CUDA 的 PyTorch 版本。").classes("text-sm text-gray-700 mb-2")
+                    ui.label("安装 GPU 版 PyTorch 可以显著提升视频处理速度（通常提升 2-5 倍）").classes("text-sm text-gray-700 mb-4")
+
+                    ui.label("安装命令：").classes("text-sm font-bold mt-2")
+                    install_cmd = f"pip3 install torch torchvision torchaudio --index-url https://mirrors.nju.edu.cn/pytorch/whl/{cuda_version}"
+                    with ui.row().classes("w-full items-center gap-2 mt-1"):
+                        ui.textarea(value=install_cmd).classes("flex-1 text-sm font-mono").props("readonly outlined")
+                        def copy_cmd():
+                            ui.run_javascript(f"navigator.clipboard.writeText('{install_cmd}')")
+                            ui.notify("已复制到剪贴板", type="info", timeout=2000)
+                        ui.button(icon="content_copy", on_click=copy_cmd).props("flat dense")
+
+                    with ui.row().classes("w-full justify-end gap-2 mt-4"):
+                        def skip_reminder():
+                            state.config["first_launch_completed"] = True
+                            state.config["remind_gpu_install"] = False
+                            save_config(state.config)
+                            dialog.close()
+
+                        def complete_setup():
+                            state.config["first_launch_completed"] = True
+                            save_config(state.config)
+                            dialog.close()
+                            ui.notify("如已安装 PyTorch，请在设置中刷新硬件状态", type="info", timeout=3000)
+
+                        ui.button("不再提醒", on_click=skip_reminder).props("flat")
+                        ui.button("我已知晓", on_click=complete_setup).props("raised color=primary")
+
+                dialog.open()
+
+        except Exception as e:
+            print(f"First launch check failed: {e}")
+
 
 GENERATE_DIR = os.path.join(BASE_DIR, "generate")
 if not os.path.exists(GENERATE_DIR):
@@ -235,9 +325,9 @@ class WebLogger:
 
 
 # --- Atomic Finalization Helper ---
-def finalize_task(task_id: str, raw_title: str, report_content: str) -> tuple:
+def finalize_task(task_id: str, raw_title: str, report_content: str, abstract_content: str = "", contents_content: str = "") -> tuple:
     """
-    Atomic finalization: Save report.md, update paths, then rename folder.
+    Atomic finalization: Save report.md, abstract.md, contents.md, update paths, then rename folder.
     Returns (final_folder_path, updated_report_content).
     """
     from core.utils import sanitize_filename
@@ -258,6 +348,8 @@ def finalize_task(task_id: str, raw_title: str, report_content: str) -> tuple:
 
 
     report_path = os.path.join(old_folder, "report.md")
+    abstract_path = os.path.join(old_folder, "abstract.md")
+    contents_path = os.path.join(old_folder, "contents.md")
 
     if not os.path.exists(old_folder):
         print(f"[Finalize] Error: Folder {old_folder} not found.")
@@ -278,7 +370,25 @@ def finalize_task(task_id: str, raw_title: str, report_content: str) -> tuple:
     except Exception as e:
         print(f"[Finalize] Could not save report: {e}")
 
-    # 3. Rename folder (the atomic move)
+    # 3. Save abstract.md if content exists
+    if abstract_content:
+        try:
+            with open(abstract_path, "w", encoding="utf-8") as f:
+                f.write(abstract_content)
+            print(f"[Finalize] Saved abstract.md to {abstract_path}")
+        except Exception as e:
+            print(f"[Finalize] Could not save abstract: {e}")
+
+    # 4. Save contents.md if content exists
+    if contents_content:
+        try:
+            with open(contents_path, "w", encoding="utf-8") as f:
+                f.write(contents_content)
+            print(f"[Finalize] Saved contents.md to {contents_path}")
+        except Exception as e:
+            print(f"[Finalize] Could not save contents: {e}")
+
+    # 5. Rename folder (the atomic move)
     try:
         os.rename(old_folder, new_folder)
         print(f"[Finalize] Renamed folder: {old_folder} -> {new_folder}")
@@ -546,24 +656,10 @@ async def process_chunk_recursively(chunk_index, total_chunks, chunk, dl_res, vi
             chunk_full_response += chunk_text
             chunk_content_received = True
             
-            # Combine all chunk summaries so far
-            # Add chunk separator with chunk number before new chunk content
-            # Check if this is the first content for this chunk (to avoid duplicate separators in recursive splits)
-            chunk_num_str = str(chunk_index).split('.')[0]  # Get main chunk number
-            separator = f"\n\n{'=' * 60}\n第 {chunk_num_str} 分块\n{'=' * 60}\n\n"
-            
             if full_response:
-                # Check if the last content already has a separator for this chunk number
-                # This helps avoid duplicate separators when recursive splits occur
-                last_separator_pattern = f"第 {chunk_num_str} 分块"
-                if last_separator_pattern not in full_response[-500:]:  # Check last 500 chars to avoid false positives
-                    current_full_response = full_response + separator + chunk_full_response
-                else:
-                    # Already has separator, just add content with a simple line break
-                    current_full_response = full_response + "\n\n" + chunk_full_response
+                current_full_response = full_response + "\n\n" + chunk_full_response
             else:
-                # First chunk: add separator at the beginning
-                current_full_response = separator + chunk_full_response
+                current_full_response = chunk_full_response
             step_ai.props('caption="✍️ Writing report..."')
 
             # Image Logic Logic (Updated for assets_dir)
@@ -691,6 +787,108 @@ async def process_chunk_recursively(chunk_index, total_chunks, chunk, dl_res, vi
     
     return chunk_content_received, chunk_full_response, chunk_full_reasoning, final_display_text, full_response, chunk_toc
 
+async def generate_segmented_content_async(
+    chunk_idx, total_chunks, chunk_content, vision_frames, config, prev_abstracts="", on_stream=None
+):
+    """
+    Generate segmented content for a chunk using the new segmented prompts.
+    Returns the generated content.
+    """
+    if not config["api_key"]:
+        return "Error: API Key missing."
+
+    client = AsyncOpenAI(api_key=config["api_key"], base_url=config["base_url"])
+
+    ui_lang = state.config["ui_language"]
+    default_lang = ui_lang
+
+    base_identity = get_prompt("chunk", "base_identity", ui_lang, default_lang=default_lang)
+    language_style = get_prompt("chunk", "language_style", ui_lang, default_lang=default_lang)
+
+    complexity_levels = {
+        1: get_text("complexity_level_1", ui_lang),
+        2: get_text("complexity_level_2", ui_lang),
+        3: get_text("complexity_level_3", ui_lang),
+        4: get_text("complexity_level_4", ui_lang),
+        5: get_text("complexity_level_5", ui_lang),
+    }
+    complexity_instruction = complexity_levels.get(3, complexity_levels[3])
+
+    if chunk_idx == 1:
+        content_prompt = get_prompt("chunk", "chunk_first_content", ui_lang,
+            chunk_idx=chunk_idx,
+            total_chunks=total_chunks
+        )
+    else:
+        content_prompt = get_prompt("chunk", "chunk_n_content", ui_lang,
+            chunk_idx=chunk_idx,
+            total_chunks=total_chunks,
+            prev_chunk_count=chunk_idx - 1,
+            prev_abstracts=prev_abstracts
+        )
+
+    deep_thinking_instruction = ""
+    if config.get("deep_thinking", False):
+        if ui_lang == "zh":
+            deep_thinking_instruction = "\n\n特别注意：启用深度思考模式。请进行多角度分析，深入挖掘内容背后的含义和逻辑关系，提供更全面的见解和洞察。"
+        else:
+            deep_thinking_instruction = "\n\nSpecial note: Deep thinking mode is enabled. Please perform multi-angle analysis, dig deeper into the meaning and logical relationships behind the content, and provide more comprehensive insights and perspectives."
+
+    complexity_requirement = get_prompt("chunk", "output_complexity_requirement", ui_lang)
+    user_extra = get_prompt("chunk", "user_extra_requirement", ui_lang)
+
+    system_prompt = f"""{base_identity}
+
+{language_style}
+
+{complexity_requirement}{complexity_instruction}
+
+{content_prompt}
+
+{deep_thinking_instruction}
+
+Output only the formal content with headings, nothing else.
+"""
+
+    try:
+        print(f"[Segmented] Generating content for chunk {chunk_idx}/{total_chunks}...")
+
+        if config["enable_vision"] and vision_frames:
+            user_content = build_multimodal_payload(
+                f"Chunk {chunk_idx}/{total_chunks}", chunk_content, [], vision_frames, detail=config["vision_detail"]
+            )
+        else:
+            user_content = chunk_content
+
+        async def api_call():
+            return await client.chat.completions.create(
+                model=config["model_name"],
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content},
+                ],
+                stream=True,
+            )
+
+        response = await retry_async(api_call, max_retries=3, initial_delay=1, backoff_factor=2)
+
+        content = ""
+        async for chunk in response:
+            delta = chunk.choices[0].delta
+            chunk_text = getattr(delta, "content", None)
+            if chunk_text:
+                content += chunk_text
+                if on_stream:
+                    on_stream(content)
+
+        print(f"[Segmented] Generated content for chunk {chunk_idx}: {len(content)} chars")
+        return content
+
+    except Exception as e:
+        print(f"[Segmented] Error generating content for chunk {chunk_idx}: {e}")
+        return f"Error generating content: {str(e)}"
+
+
 async def generate_summary_stream_async(
     title, full_text, segments, vision_frames, config, custom_prompt="", complexity=3
 ):
@@ -700,7 +898,6 @@ async def generate_summary_stream_async(
 
     client = AsyncOpenAI(api_key=config["api_key"], base_url=config["base_url"])
 
-    # Complexity level descriptions
     complexity_levels = {
         1: get_text("complexity_level_1", state.config["ui_language"]),
         2: get_text("complexity_level_2", state.config["ui_language"]),
@@ -711,106 +908,138 @@ async def generate_summary_stream_async(
 
     complexity_instruction = complexity_levels.get(complexity, complexity_levels[3])
 
-    # Base system identity (always included)
-    # 根据UI语言动态生成base_identity内容
-    if state.config["ui_language"] == "zh":
-        base_identity = get_text("base_identity_zh", state.config["ui_language"])
-    else:
-        base_identity = get_text("base_identity_en", state.config["ui_language"])
+    ui_lang = state.config["ui_language"]
+    default_lang = ui_lang
 
-    # Build system prompt
-    # 根据UI语言设置默认生成语言
-    default_lang = state.config["ui_language"]
+    base_identity = get_prompt("normal", "base_identity", ui_lang, default_lang=default_lang)
+    language_style = get_prompt("normal", "language_style", ui_lang, default_lang=default_lang)
 
-    # 构建语言风格部分
-    language_style = get_text("language_style", state.config["ui_language"]).format(
-        default_lang=default_lang
-    )
+    deep_thinking_instruction = ""
+    if config.get("deep_thinking", False):
+        if ui_lang == "zh":
+            deep_thinking_instruction = "\n\n特别注意：启用深度思考模式。请进行多角度分析，深入挖掘内容背后的含义和逻辑关系，提供更全面的见解和洞察。"
+        else:
+            deep_thinking_instruction = "\n\nSpecial note: Deep thinking mode is enabled. Please perform multi-angle analysis, dig deeper into the meaning and logical relationships behind the content, and provide more comprehensive insights and perspectives."
 
-    # Check if this is a chunk summary
     is_chunk_summary = "Chunk" in title
-    
-    # Build completely separate prompts for chunk mode vs non-chunk mode
+
     if is_chunk_summary:
-        # Chunk mode: simplified prompt focused on partial content
         if custom_prompt and custom_prompt.strip():
+            user_extra = get_prompt("normal", "user_extra_requirement", ui_lang)
+            complexity_requirement = get_prompt("normal", "output_complexity_requirement", ui_lang)
+            chunk_requirements = get_prompt("chunk", "chunk_requirements", ui_lang)
+
             system_prompt = f"""{base_identity}
 
-{get_text("user_extra_requirement", state.config["ui_language"])}
+{user_extra}
 {custom_prompt.strip()}
 
-{get_text("output_complexity_requirement", state.config["ui_language"])}{complexity_instruction}
+{complexity_requirement}{complexity_instruction}
 
-{get_text("chunk_summary_requirements", state.config["ui_language"])}
+{chunk_requirements}
+
+{deep_thinking_instruction}
 
 {language_style}"""
         else:
+            complexity_requirement = get_prompt("normal", "output_complexity_requirement", ui_lang)
+            chunk_requirements = get_prompt("chunk", "chunk_requirements", ui_lang)
+
             system_prompt = f"""{base_identity}
 
-{get_text("output_complexity_requirement", state.config["ui_language"])}{complexity_instruction}
+{complexity_requirement}{complexity_instruction}
 
-{get_text("chunk_summary_requirements", state.config["ui_language"])}
+{chunk_requirements}
+
+{deep_thinking_instruction}
 
 {language_style}"""
     else:
-        # Non-chunk mode: full video summary with complete structure
         if custom_prompt and custom_prompt.strip():
+            user_extra = get_prompt("normal", "user_extra_requirement", ui_lang)
+            complexity_requirement = get_prompt("normal", "output_complexity_requirement", ui_lang)
+            full_requirements = get_prompt("normal", "full_requirements", ui_lang)
+            core_layout = get_prompt("normal", "core_layout_requirements", ui_lang)
+            one_liner = get_prompt("normal", "the_one_liner", ui_lang)
+            one_liner_desc = get_prompt("normal", "the_one_liner_desc", ui_lang)
+            structured_toc = get_prompt("normal", "structured_toc", ui_lang)
+            structured_toc_desc = get_prompt("normal", "structured_toc_desc", ui_lang)
+            structured_sections = get_prompt("normal", "structured_sections", ui_lang)
+            structured_sections_desc = get_prompt("normal", "structured_sections_desc", ui_lang)
+            data_comparison = get_prompt("normal", "data_comparison", ui_lang)
+            math_formulas_desc = get_prompt("normal", "math_formulas_desc", ui_lang)
+            visual_evidence = get_prompt("normal", "visual_evidence", ui_lang)
+            visual_evidence_desc = get_prompt("normal", "visual_evidence_desc", ui_lang)
+
             system_prompt = f"""{base_identity}
 
-{get_text("user_extra_requirement", state.config["ui_language"])}
+{user_extra}
 {custom_prompt.strip()}
 
-{get_text("output_complexity_requirement", state.config["ui_language"])}{complexity_instruction}
+{complexity_requirement}{complexity_instruction}
 
-{get_text("non_chunk_full_requirements", state.config["ui_language"])}
+{full_requirements}
 
-{get_text("core_layout_requirements", state.config["ui_language"])}
+{core_layout}
 
-{get_text("the_one_liner", state.config["ui_language"])}
-{get_text("the_one_liner_desc", state.config["ui_language"])}
+{one_liner}
+{one_liner_desc}
 
-{get_text("structured_toc", state.config["ui_language"])}
-{get_text("structured_toc_desc", state.config["ui_language"])}
+{structured_toc}
+{structured_toc_desc}
 
-{get_text("structured_sections", state.config["ui_language"])}
-{get_text("structured_sections_desc", state.config["ui_language"])}
+{structured_sections}
+{structured_sections_desc}
 
-{get_text("data_comparison", state.config["ui_language"])}
-{get_text("data_comparison_desc", state.config["ui_language"])}
+{data_comparison}
+{math_formulas_desc}
 
-{get_text("math_formulas", state.config["ui_language"])}
-{get_text("math_formulas_desc", state.config["ui_language"])}
-
-{get_text("visual_evidence", state.config["ui_language"])}
-{get_text("visual_evidence_desc", state.config["ui_language"])}
+{visual_evidence}
+{visual_evidence_desc}
 
 {language_style}"""
         else:
+            complexity_requirement = get_prompt("normal", "output_complexity_requirement", ui_lang)
+            full_requirements = get_prompt("normal", "full_requirements", ui_lang)
+            core_layout = get_prompt("normal", "core_layout_requirements", ui_lang)
+            one_liner = get_prompt("normal", "the_one_liner", ui_lang)
+            one_liner_desc = get_prompt("normal", "the_one_liner_desc", ui_lang)
+            structured_toc = get_prompt("normal", "structured_toc", ui_lang)
+            structured_toc_desc = get_prompt("normal", "structured_toc_desc", ui_lang)
+            structured_sections = get_prompt("normal", "structured_sections", ui_lang)
+            structured_sections_desc = get_prompt("normal", "structured_sections_desc", ui_lang)
+            data_comparison = get_prompt("normal", "data_comparison", ui_lang)
+            data_comparison_desc = get_prompt("normal", "data_comparison_desc", ui_lang)
+            math_formulas = get_prompt("normal", "math_formulas", ui_lang)
+            math_formulas_desc = get_prompt("normal", "math_formulas_desc", ui_lang)
+            visual_evidence = get_prompt("normal", "visual_evidence", ui_lang)
+            visual_evidence_desc = get_prompt("normal", "visual_evidence_desc", ui_lang)
+
             system_prompt = f"""{base_identity}
 
-{get_text("output_complexity_requirement", state.config["ui_language"])}{complexity_instruction}
+{complexity_requirement}{complexity_instruction}
 
-{get_text("non_chunk_full_requirements", state.config["ui_language"])}
+{full_requirements}
 
-{get_text("core_layout_requirements", state.config["ui_language"])}
+{core_layout}
 
-{get_text("the_one_liner", state.config["ui_language"])}
-{get_text("the_one_liner_desc", state.config["ui_language"])}
+{one_liner}
+{one_liner_desc}
 
-{get_text("structured_toc", state.config["ui_language"])}
-{get_text("structured_toc_desc", state.config["ui_language"])}
+{structured_toc}
+{structured_toc_desc}
 
-{get_text("structured_sections", state.config["ui_language"])}
-{get_text("structured_sections_desc", state.config["ui_language"])}
+{structured_sections}
+{structured_sections_desc}
 
-{get_text("data_comparison", state.config["ui_language"])}
-{get_text("data_comparison_desc", state.config["ui_language"])}
+{data_comparison}
+{data_comparison_desc}
 
-{get_text("math_formulas", state.config["ui_language"])}
-{get_text("math_formulas_desc", state.config["ui_language"])}
+{math_formulas}
+{math_formulas_desc}
 
-{get_text("visual_evidence", state.config["ui_language"])}
-{get_text("visual_evidence_desc", state.config["ui_language"])}
+{visual_evidence}
+{visual_evidence_desc}
 
 {language_style}"""
 
@@ -903,7 +1132,6 @@ async def generate_summary_stream_async(
         error_msg = str(e)
         print(f"[AI API] Error during API call: {error_msg}")
         
-        # Check if this is a token limit error
         is_token_limit_error = "Total tokens" in error_msg and "exceed max message tokens" in error_msg
         
         if is_token_limit_error:
@@ -911,6 +1139,159 @@ async def generate_summary_stream_async(
             yield ("error", f"token_limit_error: {error_msg}")
         else:
             yield ("error", f"\n\n**Error:** {error_msg}")
+
+
+async def generate_abstract_async(
+    chunk_idx, total_chunks, chunk_content, prev_abstracts, config, on_stream=None
+):
+    """
+    Generate abstract for a chunk. Returns the abstract text.
+    """
+    if not config["api_key"]:
+        return "Error: API Key missing."
+
+    client = AsyncOpenAI(api_key=config["api_key"], base_url=config["base_url"])
+
+    complexity_levels = {
+        1: get_text("complexity_level_1", state.config["ui_language"]),
+        2: get_text("complexity_level_2", state.config["ui_language"]),
+        3: get_text("complexity_level_3", state.config["ui_language"]),
+        4: get_text("complexity_level_4", state.config["ui_language"]),
+        5: get_text("complexity_level_5", state.config["ui_language"]),
+    }
+
+    ui_lang = state.config["ui_language"]
+    default_lang = ui_lang
+
+    base_identity = get_prompt("chunk", "base_identity", ui_lang, default_lang=default_lang)
+    language_style = get_prompt("chunk", "language_style", ui_lang, default_lang=default_lang)
+
+    if chunk_idx == 1:
+        abstract_prompt = get_prompt("chunk", "chunk_first_abstract", ui_lang,
+            chunk_idx=chunk_idx,
+            total_chunks=total_chunks,
+            chunk_idx_plus_1=chunk_idx + 1
+        )
+    else:
+        abstract_prompt = get_prompt("chunk", "chunk_n_abstract", ui_lang,
+            chunk_idx=chunk_idx,
+            prev_abstracts=prev_abstracts
+        )
+
+    deep_thinking_instruction = ""
+    if config.get("deep_thinking", False):
+        if ui_lang == "zh":
+            deep_thinking_instruction = "\n\n特别注意：启用深度思考模式。请进行多角度分析，深入挖掘内容背后的含义和逻辑关系，提供更全面的见解和洞察。"
+        else:
+            deep_thinking_instruction = "\n\nSpecial note: Deep thinking mode is enabled. Please perform multi-angle analysis, dig deeper into the meaning and logical relationships behind the content, and provide more comprehensive insights and perspectives."
+
+    system_prompt = f"""{base_identity}
+
+{language_style}
+
+{abstract_prompt}
+
+{deep_thinking_instruction}
+
+Output only the abstract content, nothing else.
+"""
+
+    try:
+        print(f"[Abstract] Generating abstract for chunk {chunk_idx}/{total_chunks}...")
+        
+        async def api_call():
+            return await client.chat.completions.create(
+                model=config["model_name"],
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"请根据以下第 {chunk_idx} 部分的内容生成摘要：\n\n{chunk_content}"},
+                ],
+                stream=True,
+            )
+
+        response = await retry_async(api_call, max_retries=3, initial_delay=1, backoff_factor=2)
+
+        abstract = ""
+        async for chunk in response:
+            delta = chunk.choices[0].delta
+            chunk_text = getattr(delta, "content", None)
+            if chunk_text:
+                abstract += chunk_text
+                if on_stream:
+                    on_stream(abstract)
+
+        print(f"[Abstract] Generated abstract for chunk {chunk_idx}: {len(abstract)} chars")
+        return abstract
+
+    except Exception as e:
+        print(f"[Abstract] Error generating abstract for chunk {chunk_idx}: {e}")
+        return f"Error generating abstract: {str(e)}"
+
+
+async def generate_final_contents_async(full_abstracts, config):
+    """
+    Generate final table of contents from all abstracts.
+    """
+    if not config["api_key"]:
+        return "Error: API Key missing."
+
+    client = AsyncOpenAI(api_key=config["api_key"], base_url=config["base_url"])
+
+    if state.config["ui_language"] == "zh":
+        base_identity = get_text("base_identity_zh", state.config["ui_language"])
+    else:
+        base_identity = get_text("base_identity_en", state.config["ui_language"])
+
+    default_lang = state.config["ui_language"]
+    language_style = get_text("language_style", state.config["ui_language"]).format(
+        default_lang=default_lang
+    )
+
+    final_prompt = get_text("final_summary_prompt", state.config["ui_language"]).format(
+        full_abstracts=full_abstracts
+    )
+
+    # Deep thinking mode addition
+    deep_thinking_instruction = ""
+    if config.get("deep_thinking", False):
+        if state.config["ui_language"] == "zh":
+            deep_thinking_instruction = "\n\n特别注意：启用深度思考模式。请进行多角度分析，深入挖掘内容背后的含义和逻辑关系，提供更全面的见解和洞察。"
+        else:
+            deep_thinking_instruction = "\n\nSpecial note: Deep thinking mode is enabled. Please perform multi-angle analysis, dig deeper into the meaning and logical relationships behind the content, and provide more comprehensive insights and perspectives."
+
+    system_prompt = f"""{base_identity}
+
+{language_style}
+
+{final_prompt}
+
+{deep_thinking_instruction}
+
+Output only the contents.md content, nothing else.
+"""
+
+    try:
+        print(f"[Final] Generating final table of contents...")
+        
+        async def api_call():
+            return await client.chat.completions.create(
+                model=config["model_name"],
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": "请根据所有部分的摘要生成最终的目录和梗概。"},
+                ],
+                stream=False,
+            )
+        
+        response = await retry_async(api_call, max_retries=3, initial_delay=1, backoff_factor=2)
+
+        contents = response.choices[0].message.content.strip()
+        print(f"[Final] Generated table of contents: {len(contents)} chars")
+        return contents
+
+    except Exception as e:
+        print(f"[Final] Error generating final contents: {e}")
+        return f"Error generating contents: {str(e)}"
 
 
 # --- UI Construction ---
@@ -943,68 +1324,74 @@ def index():
     <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.body);"></script>
     <script>
-        // Function to re-render math formulas in dynamically updated content
         function rerenderMath(element) {
-            if (typeof renderMathInElement !== 'undefined') {
-                if (element) {
+            if (typeof renderMathInElement !== 'undefined' && element) {
+                try {
                     renderMathInElement(element, {
                         delimiters: [
                             {left: '$$', right: '$$', display: true},
                             {left: '$', right: '$', display: false},
-                            {left: '\\[', right: '\\]', display: true},
-                            {left: '\\(', right: '\\)', display: false}
+                            {left: '\\\\[', right: '\\\\]', display: true},
+                            {left: '\\\\(', right: '\\\\)', display: false}
                         ]
                     });
-                } else {
-                    renderMathInElement(document.body, {
-                        delimiters: [
-                            {left: '$$', right: '$$', display: true},
-                            {left: '$', right: '$', display: false},
-                            {left: '\\[', right: '\\]', display: true},
-                            {left: '\\(', right: '\\)', display: false}
-                        ]
-                    });
+                } catch (e) {
+                    console.log('Math render error:', e);
                 }
             }
         }
-        // Use MutationObserver to automatically re-render math when content changes
+        
+        function findAndRenderMath(root) {
+            const rootElement = root || document.body;
+            rerenderMath(rootElement);
+        }
+        
         if (typeof MutationObserver !== 'undefined') {
+            let debounceTimer = null;
             const observer = new MutationObserver(function(mutations) {
-                mutations.forEach(function(mutation) {
-                    if (mutation.addedNodes.length) {
-                        mutation.addedNodes.forEach(function(node) {
-                            if (node.nodeType === 1) { // Element node
-                                setTimeout(function() {
-                                    rerenderMath(node);
-                                }, 100);
-                            }
-                        });
-                    }
-                    if (mutation.type === 'childList' && mutation.target.classList) {
-                        if (mutation.target.classList.contains('prose') || 
-                            mutation.target.classList.contains('report-content') ||
-                            mutation.target.closest('.prose') ||
-                            mutation.target.closest('.report-content')) {
-                            setTimeout(function() {
-                                rerenderMath(mutation.target);
-                            }, 100);
+                if (debounceTimer) {
+                    clearTimeout(debounceTimer);
+                }
+                debounceTimer = setTimeout(function() {
+                    mutations.forEach(function(mutation) {
+                        if (mutation.type === 'childList' && mutation.addedNodes.length) {
+                            mutation.addedNodes.forEach(function(node) {
+                                if (node.nodeType === 1) {
+                                    findAndRenderMath(node);
+                                }
+                            });
                         }
-                    }
-                });
+                        if (mutation.type === 'childList') {
+                            const target = mutation.target;
+                            if (target && target.classList) {
+                                if (target.classList.contains('q-markdown') || 
+                                    target.classList.contains('prose') || 
+                                    target.classList.contains('report-content') ||
+                                    target.closest('.q-markdown')) {
+                                    findAndRenderMath(target);
+                                }
+                            }
+                        }
+                    });
+                }, 200);
             });
-            // Start observing when DOM is ready
-            if (document.readyState === 'loading') {
-                document.addEventListener('DOMContentLoaded', function() {
+            
+            const startObserver = function() {
+                try {
                     observer.observe(document.body, {
                         childList: true,
-                        subtree: true
+                        subtree: true,
+                        characterData: true
                     });
-                });
+                } catch (e) {
+                    console.log('Observer start error:', e);
+                }
+            };
+            
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', startObserver);
             } else {
-                observer.observe(document.body, {
-                    childList: true,
-                    subtree: true
-                });
+                startObserver();
             }
         }
     </script>
@@ -1106,6 +1493,151 @@ def index():
                     ).bind_value(state.config, "model_name").classes("w-full").props(
                         'outlined dense item-aligned input-class="text-sm"'
                     )
+                    
+                    # 深度思考开关
+                    with ui.row().classes("w-full justify-between items-center px-1"):
+                        ui.label(
+                            get_text("lbl_deep_thinking", state.config["ui_language"])
+                        ).classes("text-sm text-gray-700")
+                        ui.switch().bind_value(state.config, "deep_thinking").props(
+                            "dense color=primary size=sm"
+                        )
+                    
+                    # API连通性测试按钮
+                    test_api_btn = ui.button(
+                        get_text("btn_test_api", state.config["ui_language"]),
+                        on_click=None  # Will be set after function definition
+                    ).classes("w-full").props("outline color=primary")
+                    
+                    async def test_api_connectivity():
+                        if not state.config["api_key"]:
+                            ui.notify("请先设置API密钥", type="negative")
+                            print("[API Test] Error: API Key missing.")
+                            return
+                        if not state.config["base_url"]:
+                            ui.notify("请先设置Base URL", type="negative")
+                            print("[API Test] Error: Base URL missing.")
+                            return
+                        if not state.config["model_name"]:
+                            ui.notify("请先设置模型名称", type="negative")
+                            print("[API Test] Error: Model name missing.")
+                            return
+                        
+                        # 启用加载状态
+                        test_api_btn.set_text("测试中...")
+                        test_api_btn.props('loading')
+                        
+                        print("[API Test] Starting API connectivity test...")
+                        
+                        try:
+                            from openai import AsyncOpenAI
+                            client = AsyncOpenAI(
+                                api_key=state.config["api_key"], 
+                                base_url=state.config["base_url"]
+                            )
+                            
+                            # 测试API连通性，使用文本+图片请求
+                            # First, try a simple text request
+                            test_prompt = "Hello, this is a connectivity test. Please respond with 'Connection successful' only."
+                            
+                            # Try text-only request first
+                            response = await client.chat.completions.create(
+                                model=state.config["model_name"],
+                                messages=[{"role": "user", "content": test_prompt}],
+                                max_tokens=20,
+                                temperature=0.7
+                            )
+                            
+                            # 记录详细的响应信息
+                            print(f"[API Test] Full response type: {type(response)}")
+                            print(f"[API Test] Full response: {response}")
+                            print(f"[API Test] Response choices: {response.choices}")
+                            print(f"[API Test] First choice: {response.choices[0]}")
+                            print(f"[API Test] Message: {response.choices[0].message}")
+                            
+                            # 检查响应内容是否存在
+                            message_content = response.choices[0].message.content
+                            if message_content is None:
+                                # 某些API（如Google Gemini）可能返回None内容，我们需要处理这种情况
+                                result = "Connection successful (no content returned)"
+                                print(f"[API Test] Text API test successful but no content returned: {message_content}")
+                            else:
+                                result = message_content.strip()
+                                print(f"[API Test] Text API test successful: {result}")
+                            
+                            # If text request succeeded, try a multimodal request if vision is enabled
+                            if state.config.get("enable_vision", True):
+                                try:
+                                    # Create a simple multimodal request with a base64 encoded placeholder image
+                                    # This is a minimal base64 encoded 16x16 pixel PNG image to meet minimum dimension requirements
+                                    # Simple red square with white border - compatible with all APIs including Google Gemini
+                                    # Generated specifically to meet Google Gemini API image processing requirements
+                                    placeholder_image = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
+                                    
+                                    # 构建多模态请求
+                                    multimodal_messages = [
+                                        {
+                                            "role": "user",
+                                            "content": [
+                                                {"type": "text", "text": "This is a test of multimodal API connectivity. Please respond with 'Multimodal test successful' only."},
+                                                {
+                                                    "type": "image_url",
+                                                    "image_url": {
+                                                        "url": f"data:image/png;base64,{placeholder_image}"
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                    
+                                    print(f"[API Test] Multimodal request messages: {multimodal_messages}")
+                                    print(f"[API Test] Image URL length: {len(multimodal_messages[0]['content'][1]['image_url']['url'])}")
+                                    print(f"[API Test] Image URL format: {multimodal_messages[0]['content'][1]['image_url']['url'][:50]}...")
+                                    print(f"[API Test] Base64 image data length: {len(placeholder_image)}")
+                                    print(f"[API Test] Base64 image data: {placeholder_image}")
+                                    
+                                    multimodal_response = await client.chat.completions.create(
+                                        model=state.config["model_name"],
+                                        messages=multimodal_messages,
+                                        max_tokens=30,
+                                        temperature=0.7
+                                    )
+                                    
+                                    # 记录详细的多模态响应信息
+                                    print(f"[API Test] Multimodal response type: {type(multimodal_response)}")
+                                    print(f"[API Test] Multimodal response: {multimodal_response}")
+                                    print(f"[API Test] Multimodal response choices: {multimodal_response.choices}")
+                                    print(f"[API Test] Multimodal first choice: {multimodal_response.choices[0]}")
+                                    print(f"[API Test] Multimodal message: {multimodal_response.choices[0].message}")
+                                    
+                                    # 检查多模态响应内容是否存在
+                                    multimodal_content = multimodal_response.choices[0].message.content
+                                    if multimodal_content is None:
+                                        multimodal_result = "Multimodal test successful (no content returned)"
+                                        print(f"[API Test] Multimodal API test successful but no content returned: {multimodal_content}")
+                                    else:
+                                        multimodal_result = multimodal_content.strip()
+                                        print(f"[API Test] Multimodal API test successful: {multimodal_result}")
+                                    ui.notify(f"API连接成功 - 文本: {result}, 多模态: {multimodal_result}", type="positive")
+                                except Exception as multimodal_error:
+                                    # If multimodal fails, still report text success
+                                    print(f"[API Test] Multimodal API test failed: {str(multimodal_error)}")
+                                    ui.notify(f"API连接成功 - 文本: {result}, 多模态测试失败: {str(multimodal_error)}", type="warning")
+                            else:
+                                print("[API Test] Vision disabled, skipping multimodal test")
+                                ui.notify(f"API连接成功: {result}", type="positive")
+                            
+                            print("[API Test] API connectivity test completed successfully")
+                            
+                        except Exception as e:
+                            print(f"[API Test] API connectivity test failed: {str(e)}")
+                            ui.notify(f"API连接失败: {str(e)}", type="negative")
+                        finally:
+                            # 恢复按钮状态
+                            test_api_btn.set_text(get_text("btn_test_api", state.config["ui_language"]))
+                            test_api_btn.props(remove='loading')
+                    
+                    test_api_btn.on('click', test_api_connectivity)
 
                 # 生成设置
                 with ui.tab_panel(tab_gen).classes("p-1 flex flex-col gap-3"):
@@ -1335,15 +1867,53 @@ def index():
                         f"w-full bg-{status_color}-50 p-3 rounded-lg border border-{status_color}-200 items-center gap-3"
                     ):
                         ui.icon("memory", size="sm").classes(f"text-{status_color}")
-                        with ui.column().classes("gap-0"):
-                            ui.label("Detected Hardware:").classes(
-                                "text-xs text-gray-500 uppercase font-bold"
+                        # Hardware Status Section with Refresh Button
+                        with ui.row().classes("w-full items-center gap-2"):
+                            with ui.column().classes("gap-0"):
+                                ui.label("Detected Hardware:").classes(
+                                    "text-xs text-gray-500 uppercase font-bold"
+                                )
+                                ui.label(hardware_info["name"]).classes(
+                                    "text-sm font-medium text-gray-900"
+                                )
+                            
+                            ui.space()
+                            
+                            def refresh_hardware_status():
+                                """Refresh hardware status display"""
+                                current_status = get_torch_install_status()
+                                
+                                status_parts = []
+                                if current_status["torch_installed"]:
+                                    status_parts.append(f"PyTorch: {current_status['torch_version'][:8]}")
+                                    if current_status["cuda_available"]:
+                                        status_parts.append(f"CUDA: {current_status['cuda_version']}")
+                                        status_parts.append(f"GPU: {current_status['device_name']}")
+                                        hardware_status_label.text = "✅ GPU 已就绪"
+                                        hardware_status_label.classes("text-sm font-medium text-green-600")
+                                    else:
+                                        hardware_status_label.text = "⚠️ PyTorch 无 CUDA"
+                                        hardware_status_label.classes("text-sm font-medium text-yellow-600")
+                                else:
+                                    hardware_status_label.text = "❌ 未安装 PyTorch"
+                                    hardware_status_label.classes("text-sm font-medium text-red-600")
+                                
+                                if status_parts:
+                                    hardware_detail_label.text = " | ".join(status_parts)
+                                    hardware_detail_label.classes("text-xs text-gray-500")
+                                else:
+                                    hardware_detail_label.text = "点击刷新获取状态"
+                                    hardware_detail_label.classes("text-xs text-gray-400")
+                            
+                            refresh_btn = ui.button(icon="refresh").props("flat round dense").tooltip("刷新硬件状态").on_click(
+                                lambda: (refresh_hardware_status(), ui.notify("状态已刷新", type="info", timeout=1000))
                             )
-                            ui.label(hardware_info["name"]).classes(
-                                "text-sm font-medium text-gray-900"
-                            )
-
-                    ui.separator()
+                        
+                        # Hardware Status Detail Label
+                        hardware_status_label = ui.label("点击刷新获取状态").classes("text-sm font-medium text-gray-400")
+                        hardware_detail_label = ui.label("").classes("text-xs text-gray-400")
+                        
+                        ui.separator()
 
                     hardware_select = ui.select(
                         label=get_text(
@@ -1423,7 +1993,7 @@ def index():
                             torch_install_btn.text = "重试下载 PyTorch CUDA"
                     
                     torch_install_btn.on_click(install_torch_handler)
-                    hardware_select.on_change(check_and_update_torch_status)
+                    hardware_select.on("update:model-value", check_and_update_torch_status)
                     
                     # Initial check after a short delay
                     ui.timer(0.5, check_and_update_torch_status, once=True)
@@ -1489,8 +2059,8 @@ def index():
                                 on_click=confirm_dialog.close,
                             ).props("flat")
 
-                            def do_clear():
-                                clear_all_history(delete_files=True)
+                            async def do_clear():
+                                await run.io_bound(clear_all_history, delete_files=True)
                                 confirm_dialog.close()
                                 new_note_handler()
                                 history_list.refresh()
@@ -1550,9 +2120,9 @@ def index():
                                 ).props("flat")
 
                                 def make_save_handler(dlg, inp, sid):
-                                    def save_rename():
+                                    async def save_rename():
                                         if inp.value and inp.value.strip():
-                                            rename_session(sid, inp.value.strip())
+                                            await run.io_bound(rename_session, sid, inp.value.strip())
                                             dlg.close()
                                             history_list.refresh()
                                             if (
@@ -1626,8 +2196,11 @@ def index():
                                 def open_rename(dlg=rename_dialog):
                                     dlg.open()
 
-                                def delete_item(sid=session_id):
-                                    delete_sess_handler(sid)
+                                async def delete_item(sid=session_id):
+                                    try:
+                                        await delete_sess_handler(sid)
+                                    except Exception as e:
+                                        print(f"Error in delete_item: {e}")
 
                                 ui.menu_item(
                                     get_text("rename", state.config["ui_language"]),
@@ -1691,11 +2264,17 @@ def index():
             else:
                 render_input_view()
 
-    def delete_sess_handler(sess_id):
-        delete_session(sess_id)
-        history_list.refresh()
-        if state.current_session and state.current_session["id"] == sess_id:
-            new_note_handler()
+    async def delete_sess_handler(sess_id):
+        try:
+            # First delete files in background
+            await run.io_bound(delete_session, sess_id)
+            # Then refresh UI
+            history_list.refresh()
+            if state.current_session and state.current_session["id"] == sess_id:
+                new_note_handler()
+        except Exception as e:
+            print(f"Error deleting session: {e}")
+            ui.notify(f"删除失败: {e}", type="negative")
 
     def load_session(sess_id):
         state.current_session = get_session(sess_id)
@@ -1779,41 +2358,81 @@ def index():
                         "w-full prose prose-lg prose-slate report-content max-w-none"
                     )
 
-                    # Enable TOC anchor links after page loads
+                    # Enable TOC anchor links after page loads with enhanced DOM safety
                     async def enable_toc_links():
                         await ui.run_javascript("""
                         (function() {
-                            const container = document.querySelector('.report-content');
-                            if (!container) return;
-                            
-                            const headings = container.querySelectorAll('h2, h3');
-                            headings.forEach(h => {
-                                const text = h.textContent.replace(/^[\\s🎯⚡💰📊🔬📑🏙️🌆🏛️💼🌊👤]*/, '').trim();
-                                const id = text.replace(/[\\s:：]+/g, '-').toLowerCase();
-                                h.id = id;
-                            });
-                            
-                            container.querySelectorAll('a[href^="#"]').forEach(a => {
-                                a.style.cursor = 'pointer';
-                                a.addEventListener('click', function(e) {
-                                    e.preventDefault();
-                                    const href = this.getAttribute('href');
-                                    const targetId = decodeURIComponent(href.substring(1));
-                                    let target = document.getElementById(targetId);
-                                    if (!target) {
-                                        const searchText = targetId.replace(/-/g, '').toLowerCase();
-                                        headings.forEach(h => {
-                                            const hText = h.textContent.replace(/[\\s:：🎯⚡💰📊🔬📑🏙️🌆🏛️💼🌊👤]/g, '').toLowerCase();
-                                            if (hText.includes(searchText) || searchText.includes(hText)) {
-                                                target = h;
+                            // Enhanced DOM safety with comprehensive error handling
+                            function safeProcessTOC() {
+                                try {
+                                    const container = document.querySelector('.report-content');
+                                    if (!container || !container.isConnected) {
+                                        console.warn('TOC container not found or disconnected');
+                                        return;
+                                    }
+                                    
+                                    const headings = container.querySelectorAll('h2, h3');
+                                    headings.forEach(h => {
+                                        if (h && h.isConnected) {
+                                            try {
+                                                const text = h.textContent.replace(/^[\\s🎯⚡💰📊🔬📑🏙️🌆🏛️💼🌊👤]*/, '').trim();
+                                                const id = text.replace(/[\\s:：]+/g, '-').toLowerCase();
+                                                h.id = id;
+                                            } catch (e) {
+                                                console.warn('Failed to process heading:', e);
                                             }
-                                        });
+                                        }
+                                    });
+                                    
+                                    const links = container.querySelectorAll('a[href^="#"]');
+                                    links.forEach(a => {
+                                        if (a && a.isConnected) {
+                                            try {
+                                                a.style.cursor = 'pointer';
+                                                
+                                                // Remove existing listeners to prevent duplicates
+                                                a.removeEventListener('click', handleTOCClick);
+                                                a.addEventListener('click', handleTOCClick);
+                                            } catch (e) {
+                                                console.warn('Failed to setup TOC link:', e);
+                                            }
+                                        }
+                                    });
+                                    
+                                    // TOC click handler with comprehensive DOM safety
+                                    function handleTOCClick(e) {
+                                        e.preventDefault();
+                                        try {
+                                            const href = this.getAttribute('href');
+                                            const targetId = decodeURIComponent(href.substring(1));
+                                            let target = document.getElementById(targetId);
+                                            
+                                            if (!target || !target.isConnected) {
+                                                const searchText = targetId.replace(/-/g, '').toLowerCase();
+                                                headings.forEach(h => {
+                                                    if (h && h.isConnected) {
+                                                        const hText = h.textContent.replace(/[\\s:：🎯⚡💰📊🔬📑🏙️🌆🏛️💼🌊👤]/g, '').toLowerCase();
+                                                        if (hText.includes(searchText) || searchText.includes(hText)) {
+                                                            target = h;
+                                                        }
+                                                    }
+                                                });
+                                            }
+                                            
+                                            if (target && target.isConnected) {
+                                                target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                            }
+                                        } catch (error) {
+                                            console.warn('TOC navigation failed:', error);
+                                        }
                                     }
-                                    if (target) {
-                                        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                                    }
-                                });
-                            });
+                                    
+                                } catch (error) {
+                                    console.error('TOC processing failed:', error);
+                                }
+                            }
+                            
+                            safeProcessTOC();
                         })();
                         """)
 
@@ -2108,46 +2727,103 @@ def index():
                         )
 
     def render_input_view():
-        # Define upload dialog first
-        upload_dialog = None
         # Store local file path
         selected_local_file = {"path": None, "task_id": None}
+        url_input_ref = {"input": None}
 
-        async def handle_upload(e):
-            if upload_dialog:
-                upload_dialog.close()
-                
-            import uuid
-            from datetime import datetime
+        # Create upload dialog with proper DOM initialization
+        upload_dialog = ui.dialog()
+        with upload_dialog, ui.card().classes("w-96"):
+            ui.label("Upload Local Video").classes("text-xl font-bold mb-4")
             
-            # Generate task ID
-            task_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            task_uuid = str(uuid.uuid4())[:8]
-            task_id = f"{task_timestamp}_{task_uuid}"
+            async def handle_upload(e):
+                try:
+                    import uuid
+                    from datetime import datetime
+                    
+                    # Generate task ID
+                    task_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    task_uuid = str(uuid.uuid4())[:8]
+                    task_id = f"{task_timestamp}_{task_uuid}"
+                    
+                    base_temp = GENERATE_DIR
+                    task_dir = os.path.join(base_temp, task_id)
+                    raw_dir = os.path.join(task_dir, "raw")
+                    assets_dir = os.path.join(task_dir, "assets")
+                    
+                    os.makedirs(raw_dir, exist_ok=True)
+                    os.makedirs(assets_dir, exist_ok=True)
+                    
+                    file_name = e.file.name
+                    target_path = os.path.join(raw_dir, file_name)
+                    
+                    # Read content from e.file (async)
+                    content = await e.file.read()
+                    with open(target_path, 'wb') as f:
+                        f.write(content)
+                    
+                    ui.notify(f"Uploaded: {file_name}")
+                    
+                    # Update UI state instead of running analysis immediately
+                    if url_input_ref["input"]:
+                        url_input_ref["input"].value = f"Local File: {file_name}"
+                        url_input_ref["input"].disable()
+                    selected_local_file["path"] = target_path
+                    selected_local_file["task_id"] = task_id
+                    
+                    # Close dialog after upload completes with delay and DOM safety
+                    await asyncio.sleep(0.1)  # Allow UI to update
+                    
+                    # Add DOM safety cleanup before closing
+                    await ui.run_javascript("""
+                    (function() {
+                        const domMonitor = window.oanDomSafetyMonitor;
+                        if (!domMonitor) return;
+                        
+                        // Cleanup upload dialog references
+                        const uploadDialog = domMonitor.safeQuerySelector('.q-dialog, .q-uploader, [class*="upload"], [class*="dialog"]');
+                        if (uploadDialog && uploadDialog.isConnected) {
+                            // Remove safety wrappers from all elements
+                            const allElements = uploadDialog.querySelectorAll('*');
+                            allElements.forEach(element => {
+                                domMonitor.cleanupElementReferences(element);
+                            });
+                            
+                            // Remove specific upload button safety wrappers
+                            const uploadButtons = uploadDialog.querySelectorAll('button, input, .q-btn');
+                            uploadButtons.forEach(btn => {
+                                if (btn && btn._safe_onclick) {
+                                    btn.onclick = btn._safe_onclick;
+                                    delete btn._safe_onclick;
+                                }
+                            });
+                        }
+                        
+                        // Stop upload monitoring
+                        domMonitor.stop();
+                        
+                        console.log('Upload dialog DOM safety cleanup completed');
+                    })();
+                    """, timeout=2.0)
+                    
+                    upload_dialog.close()
+                except Exception as e:
+                    print(f"Error in handle_upload: {e}")
+                    ui.notify(f"Upload failed: {e}", type="negative")
             
-            base_temp = GENERATE_DIR
-            task_dir = os.path.join(base_temp, task_id)
-            raw_dir = os.path.join(task_dir, "raw")
-            assets_dir = os.path.join(task_dir, "assets")
-            
-            os.makedirs(raw_dir, exist_ok=True)
-            os.makedirs(assets_dir, exist_ok=True)
-            
-            file_name = e.file.name
-            target_path = os.path.join(raw_dir, file_name)
-            
-            # Read content from e.file (async)
-            content = await e.file.read()
-            with open(target_path, 'wb') as f:
-                f.write(content)
-            
-            ui.notify(f"Uploaded: {file_name}")
-            
-            # Update UI state instead of running analysis immediately
-            url_input.value = f"Local File: {file_name}"
-            url_input.disable()
-            selected_local_file["path"] = target_path
-            selected_local_file["task_id"] = task_id
+            # Create uploader with proper error handling and DOM safety
+            uploader_ref = {"uploader": None}
+            try:
+                uploader_ref["uploader"] = ui.upload(
+                    auto_upload=True,
+                    on_upload=handle_upload,
+                    max_files=1
+                ).props("accept=.mp4,.mov,.mkv,.mp3,.wav,.m4a flat bordered").classes("w-full")
+            except Exception as e:
+                print(f"Uploader creation error: {e}")
+                ui.label("Upload component failed to load").classes("text-red-500")
+            with ui.row().classes("w-full justify-end mt-4"):
+                ui.button(get_text("cancel", state.config["ui_language"]), on_click=upload_dialog.close).props("flat color=primary")
 
         # Input Card
         with ui.card().classes("w-full max-w-3xl self-center md3-card shadow-none"):
@@ -2167,23 +2843,107 @@ def index():
                     ) as url_input
                 ):
                     pass
+                
+                # Store reference for handle_upload
+                url_input_ref["input"] = url_input
 
-                # Upload Button (Triggers Dialog)
-                ui.button(icon="file_upload", on_click=lambda: upload_dialog.open()) \
+                # Upload Button (Triggers Dialog) with proper error handling and DOM safety
+                async def open_upload_dialog():
+                    try:
+                        # Open the dialog first
+                        upload_dialog.open()
+                        
+                        # Add small delay to ensure dialog is rendered
+                        await asyncio.sleep(0.1)
+                        
+                        # Initialize DOM safety for upload dialog
+                        await ui.run_javascript("""
+                        (function() {
+                            // Enhanced upload dialog DOM safety
+                            const domMonitor = window.oanDomSafetyMonitor;
+                            if (!domMonitor) return;
+                            
+                            // Start upload-specific monitoring
+                            domMonitor.startUploadMonitor();
+                            
+                            // Add safety wrappers to upload dialog elements
+                            function enhanceUploadDialogSafety() {
+                                try {
+                                    // Find upload dialog container
+                                    const uploadDialog = domMonitor.safeQuerySelector('.q-dialog, .q-uploader, [class*="upload"], [class*="dialog"]');
+                                    if (!uploadDialog || !uploadDialog.isConnected) {
+                                        console.warn('Upload dialog not found for safety enhancement');
+                                        return;
+                                    }
+                                    
+                                    // Enhance all elements in upload dialog
+                                    const allElements = uploadDialog.querySelectorAll('*');
+                                    allElements.forEach(element => {
+                                        if (element && element.isConnected) {
+                                            domMonitor.ensureElementSafety(element);
+                                        }
+                                    });
+                                    
+                                    // Add specific safety for uploader buttons and inputs
+                                    const uploadButtons = uploadDialog.querySelectorAll('button, input, .q-btn, .q-uploader__file, .q-uploader__list');
+                                    uploadButtons.forEach(btn => {
+                                        if (btn && btn.isConnected) {
+                                            // Add safety wrapper for click handlers
+                                            if (typeof btn.onclick === 'function' && !btn._safe_onclick) {
+                                                btn._safe_onclick = btn.onclick;
+                                                btn.onclick = function(e) {
+                                                    if (!this.isConnected) {
+                                                        console.warn('Attempted click on disconnected upload button');
+                                                        return false;
+                                                    }
+                                                    try {
+                                                        return this._safe_onclick(e);
+                                                    } catch (error) {
+                                                        console.warn('Upload button click failed:', error);
+                                                        return false;
+                                                    }
+                                                };
+                                            }
+                                        }
+                                    });
+                                    
+                                    console.log('Upload dialog DOM safety enhanced');
+                                } catch (error) {
+                                    console.warn('Upload dialog safety enhancement failed:', error);
+                                }
+                            }
+                            
+                            // Run enhancement with retry
+                            function enhanceWithRetry(retryCount = 0) {
+                                if (retryCount >= 3) {
+                                    console.warn('Upload dialog safety enhancement failed after 3 retries');
+                                    return;
+                                }
+                                
+                                setTimeout(() => {
+                                    enhanceUploadDialogSafety();
+                                    
+                                    // Verify enhancement worked
+                                    const uploadDialog = domMonitor.safeQuerySelector('.q-dialog, .q-uploader');
+                                    if (!uploadDialog && retryCount < 2) {
+                                        enhanceWithRetry(retryCount + 1);
+                                    }
+                                }, retryCount * 100 + 50); // 50ms, 150ms, 250ms delays
+                            }
+                            
+                            enhanceWithRetry();
+                            
+                        })();
+                        """, timeout=3.0)
+                        
+                    except Exception as e:
+                        print(f"Error opening upload dialog: {e}")
+                        ui.notify("Failed to open upload dialog", type="negative")
+
+                ui.button(icon="file_upload", on_click=lambda: open_upload_dialog()) \
                     .props("round unelevated color=secondary text-color=white") \
                     .classes("w-12 h-12 shadow-sm") \
                     .tooltip("Upload local video file")
-
-            # Upload Dialog (Hidden by default)
-            with ui.dialog() as upload_dialog, ui.card().classes("w-96"):
-                ui.label("Upload Local Video").classes("text-xl font-bold mb-4")
-                ui.upload(
-                    auto_upload=True,
-                    on_upload=handle_upload,
-                    max_files=1
-                ).props("accept=.mp4,.mov,.mkv,.mp3,.wav,.m4a flat bordered").classes("w-full")
-                with ui.row().classes("w-full justify-end mt-4"):
-                    ui.button(get_text("cancel", state.config["ui_language"]), on_click=upload_dialog.close).props("flat color=primary")
 
             # Complexity Selector - Moved from Advanced Options
             with ui.row().classes("w-full items-center gap-2 mt-3"):
@@ -2225,10 +2985,10 @@ def index():
                     chunk_summary_toggle = (
                         ui.checkbox(
                             get_text("enable_chunk_summary", state.config["ui_language"]),
-                            value=state.config.get("enable_chunk_summary", False)
+                            value=bool(state.config.get("enable_chunk_summary", False))
                         )
                         .on("update:model-value", lambda e: (
-                            state.config.update({"enable_chunk_summary": e.args}),
+                            state.config.update({"enable_chunk_summary": bool(e.args)}),
                             save_config(state.config)
                         ))
                     )
@@ -2419,7 +3179,7 @@ def index():
                 with (
                     ui.stepper()
                     .props("flat alternative-labels animated")
-                    .classes("w-full shadow-none bg-transparent") as stepper
+                    .classes("w-full shadow-none bg-transparent oan-stepper") as stepper
                 ):
                     step_dl = ui.step("Download Video").props("icon=cloud_download")
                     step_ts = ui.step("Transcribe Audio").props("icon=graphic_eq")
@@ -2428,10 +3188,282 @@ def index():
                 # Initialize
                 stepper.value = step_dl
 
-            # Auto-scroll to show progress
-            await ui.run_javascript(
-                'document.querySelector(".q-stepper").scrollIntoView({behavior: "smooth", block: "center"})'
-            )
+            # Add a small delay to ensure the stepper is rendered before scrolling
+            await asyncio.sleep(0.3)
+            try:
+                # Auto-scroll to show progress with enhanced DOM safety
+                await ui.run_javascript("""
+                (function() {
+                    // Enhanced DOM safety with retry mechanism using global monitor
+                    function safeScrollToStepper(retryCount = 0) {
+                        // Use global DOM safety monitor if available
+                        const domMonitor = window.oanDomSafetyMonitor;
+                        
+                        const stepper = domMonitor ? 
+                            domMonitor.safeQuerySelector('.oan-stepper') : 
+                            document.querySelector('.oan-stepper');
+                        
+                        if (stepper && stepper.isConnected) {
+                            try {
+                                // Use safe scrollIntoView if available
+                                if (domMonitor && domMonitor.safeGetProperty(stepper, 'scrollIntoView')) {
+                                    stepper.scrollIntoView({behavior: 'smooth', block: 'center'});
+                                } else {
+                                    stepper.scrollIntoView({behavior: 'smooth', block: 'center'});
+                                }
+                                return true;
+                            } catch (e) {
+                                console.warn('Scroll to stepper failed:', e);
+                            }
+                        }
+                        
+                        // Retry if element not found (max 3 retries)
+                        if (retryCount < 3) {
+                            setTimeout(() => safeScrollToStepper(retryCount + 1), 200);
+                        }
+                        return false;
+                    }
+                    safeScrollToStepper();
+                })();
+                """, timeout=5.0)
+            except Exception as e:
+                print(f"Auto-scroll failed: {e}")
+            
+            # Initialize global DOM safety monitoring
+            await ui.run_javascript("""
+            (function() {
+                // Global DOM Safety Monitor
+                if (window.oanDomSafetyMonitor) return;
+                
+                window.oanDomSafetyMonitor = {
+                    observers: new Map(),
+                    
+                    // Enhanced DOM element access with safety checks
+                    safeQuerySelector: function(selector, context = document) {
+                        try {
+                            const element = context.querySelector(selector);
+                            return element && element.isConnected ? element : null;
+                        } catch (e) {
+                            console.warn('DOM query failed:', e);
+                            return null;
+                        }
+                    },
+                    
+                    // Safe element property access
+                    safeGetProperty: function(element, property) {
+                        if (!element || !element.isConnected) {
+                            console.warn('Attempted to access property on null/disconnected element:', property);
+                            return null;
+                        }
+                        try {
+                            return element[property];
+                        } catch (e) {
+                            console.warn('Property access failed:', e);
+                            return null;
+                        }
+                    },
+                    
+                    // Safe nextSibling access with retry
+                    safeNextSibling: function(element, maxRetries = 3, retryDelay = 100) {
+                        if (!element || !element.isConnected) {
+                            console.warn('Attempted to get nextSibling of null/disconnected element');
+                            return null;
+                        }
+                        
+                        function tryGetSibling(retryCount = 0) {
+                            try {
+                                const sibling = element.nextSibling;
+                                if (sibling && sibling.isConnected) {
+                                    return sibling;
+                                }
+                                
+                                if (retryCount < maxRetries) {
+                                    setTimeout(() => tryGetSibling(retryCount + 1), retryDelay);
+                                }
+                                return null;
+                            } catch (e) {
+                                console.warn('nextSibling access failed:', e);
+                                return null;
+                            }
+                        }
+                        
+                        return tryGetSibling();
+                    },
+                    
+                    // Monitor DOM mutations for upload-related changes
+                startUploadMonitor: function() {
+                    const uploadContainer = this.safeQuerySelector('.q-dialog, .q-uploader, [class*="upload"], [class*="dialog"]');
+                    if (!uploadContainer) return;
+                    
+                    const observer = new MutationObserver((mutations) => {
+                        mutations.forEach((mutation) => {
+                            if (mutation.type === 'childList') {
+                                mutation.addedNodes.forEach((node) => {
+                                    if (node.nodeType === 1) { // Element node
+                                        this.ensureElementSafety(node);
+                                        
+                                        // Special handling for upload-specific elements
+                                        if (node.classList && (
+                                            node.classList.contains('q-uploader__file') ||
+                                            node.classList.contains('q-uploader__list') ||
+                                            node.classList.contains('q-btn') ||
+                                            node.tagName === 'BUTTON' ||
+                                            node.tagName === 'INPUT'
+                                        )) {
+                                            this.enhanceUploadElementSafety(node);
+                                        }
+                                    }
+                                });
+                                
+                                mutation.removedNodes.forEach((node) => {
+                                    if (node.nodeType === 1) {
+                                        this.cleanupElementReferences(node);
+                                        
+                                        // Special cleanup for upload elements
+                                        if (node.classList && node.classList.contains('q-uploader__file')) {
+                                            this.cleanupUploadElementReferences(node);
+                                        }
+                                    }
+                                });
+                            }
+                        });
+                    });
+                    
+                    observer.observe(uploadContainer, {
+                        childList: true,
+                        subtree: true
+                    });
+                    
+                    this.observers.set('upload', observer);
+                },
+                
+                // Enhanced safety for upload-specific elements
+                enhanceUploadElementSafety: function(element) {
+                    if (!element || !element.isConnected) return;
+                    
+                    // Add safety wrapper for click events
+                    if (typeof element.onclick === 'function' && !element._safe_onclick) {
+                        element._safe_onclick = element.onclick;
+                        element.onclick = function(e) {
+                            if (!this.isConnected) {
+                                console.warn('Attempted click on disconnected upload element');
+                                return false;
+                            }
+                            try {
+                                return this._safe_onclick(e);
+                            } catch (error) {
+                                console.warn('Upload element click failed:', error);
+                                return false;
+                            }
+                        };
+                    }
+                    
+                    // Add safety for nextSibling access (common source of errors)
+                    if (!element._safe_nextSibling) {
+                        element._safe_nextSibling = element.nextSibling;
+                        Object.defineProperty(element, 'nextSibling', {
+                            get: function() {
+                                if (!this.isConnected) {
+                                    console.warn('Attempted to access nextSibling on disconnected element');
+                                    return null;
+                                }
+                                try {
+                                    return this._safe_nextSibling;
+                                } catch (error) {
+                                    console.warn('nextSibling access failed:', error);
+                                    return null;
+                                }
+                            }
+                        });
+                    }
+                },
+                
+                // Cleanup upload element references
+                cleanupUploadElementReferences: function(element) {
+                    if (element._safe_onclick) {
+                        element.onclick = element._safe_onclick;
+                        delete element._safe_onclick;
+                    }
+                    if (element._safe_nextSibling) {
+                        delete element._safe_nextSibling;
+                        delete Object.getOwnPropertyDescriptor(element, 'nextSibling');
+                    }
+                },
+                    
+                    // Ensure element safety by adding safety wrappers
+                    ensureElementSafety: function(element) {
+                        if (!element || !element.isConnected) return;
+                        
+                        // Add safety wrapper to common problematic methods
+                        const originalMethods = ['scrollIntoView', 'querySelector', 'querySelectorAll'];
+                        originalMethods.forEach(method => {
+                            if (typeof element[method] === 'function' && !element[`_safe_${method}`]) {
+                                element[`_safe_${method}`] = element[method];
+                                element[method] = function(...args) {
+                                    if (!this.isConnected) {
+                                        console.warn(`Attempted ${method} on disconnected element`);
+                                        return null;
+                                    }
+                                    try {
+                                        return this[`_safe_${method}`](...args);
+                                    } catch (e) {
+                                        console.warn(`${method} failed:`, e);
+                                        return null;
+                                    }
+                                };
+                            }
+                        });
+                    },
+                    
+                    // Cleanup element references when removed
+                    cleanupElementReferences: function(element) {
+                        // Remove any safety wrappers
+                        ['_safe_scrollIntoView', '_safe_querySelector', '_safe_querySelectorAll'].forEach(method => {
+                            if (element[method]) {
+                                delete element[method];
+                            }
+                        });
+                    },
+                    
+                    // Start all monitors
+                    start: function() {
+                        this.startUploadMonitor();
+                        console.log('OAN DOM Safety Monitor started');
+                    },
+                    
+                    // Stop all monitors
+                    stop: function() {
+                        this.observers.forEach((observer, key) => {
+                            observer.disconnect();
+                        });
+                        this.observers.clear();
+                    }
+                };
+                
+                // Start monitoring when DOM is ready
+                if (document.readyState === 'loading') {
+                    document.addEventListener('DOMContentLoaded', () => {
+                        window.oanDomSafetyMonitor.start();
+                    });
+                } else {
+                    window.oanDomSafetyMonitor.start();
+                }
+                
+                // Override global console.error to catch DOM errors
+                const originalConsoleError = console.error;
+                console.error = function(...args) {
+                    const message = args.join(' ');
+                    if (message.includes('Cannot read properties of null') || 
+                        message.includes('nextSibling') ||
+                        message.includes('is not connected')) {
+                        console.warn('DOM Safety Monitor intercepted error:', message);
+                        return;
+                    }
+                    originalConsoleError.apply(console, args);
+                };
+                
+            })();
+            """, timeout=3.0)
 
             try:
                 # 1. Download
@@ -2537,9 +3569,11 @@ def index():
                     update_progress(task_id, "Download", "Completed")
                     
                     try:
+                        # Add a small delay to ensure UI is updated
+                        await asyncio.sleep(0.1)
                         stepper.next()  # Move to TS
-                    except RuntimeError:
-                        print("Client already disconnected during download.")
+                    except RuntimeError as e:
+                        print(f"Client already disconnected during download: {e}")
                         return
 
                 # 2. Transcribe
@@ -2584,9 +3618,11 @@ def index():
                 update_progress(task_id, "Transcription", "Completed")
                 
                 try:
+                    # Add a small delay to ensure UI is updated
+                    await asyncio.sleep(0.1)
                     stepper.next()  # Move to AI
-                except RuntimeError:
-                    print("Client already disconnected during transcription.")
+                except RuntimeError as e:
+                    print(f"Client already disconnected during transcription: {e}")
                     return
 
                 # Add spinner to AI step
@@ -2642,22 +3678,19 @@ def index():
                 final_display_text = ""
                 
                 if enable_chunk_summary:
-                    # Chunk processing mode
+                    # New segmented summary mode
                     chunks = split_transcript_into_chunks(segments, target_duration_minutes=15)
-                    chunk_summaries = []
-                    chunk_context = []
-                    chunk_briefs = []
-                    accumulated_toc = ""  # 累积的目录，传递给每个分块
+                    all_abstracts = []
+                    full_report_content = ""
+                    full_abstract_content = ""
                     
-                    # Process each chunk
+                    # Process each chunk with segmented approach
                     for i, chunk in enumerate(chunks, 1):
-                        # Add a small delay between chunks to prevent connection overload
                         if i > 1:
-                            await asyncio.sleep(0.3)  # 300ms delay between chunks
+                            await asyncio.sleep(0.3)
                         
-                        step_ai.props(f'caption="正在处理第 {i}/{len(chunks)} 部分..."')
+                        step_ai.props(f'caption="正在生成第 {i}/{len(chunks)} 部分内容..."')
                         
-                        # Get only vision frames that fall within this chunk's time range
                         chunk_start_time = chunk['start_time']
                         chunk_end_time = chunk['end_time']
                         chunk_vision_frames = [
@@ -2665,151 +3698,86 @@ def index():
                             if chunk_start_time <= frame['timestamp'] <= chunk_end_time
                         ]
                         
-                        # Process chunk recursively with accumulated TOC
-                        success, chunk_full_response, chunk_full_reasoning, final_display_text, _, chunk_toc = await process_chunk_recursively(
-                            i, len(chunks), chunk, dl_res, chunk_vision_frames, state, custom_prompt, complexity, 
-                            chunk_context, step_ai, md_container, final_display_text, full_response, 
-                            reasoning_exp, reasoning_label, task_id, assets_dir, processed_timestamps, accumulated_toc
+                        # Generate segmented content for this chunk
+                        prev_abstracts_str = "\n\n".join(all_abstracts) if all_abstracts else ""
+                        chunk_content = ""
+                        separator = f"\n\n{'=' * 60}\n第 {i} 部分\n{'=' * 60}\n\n"
+                        
+                        def on_content_stream(partial_content):
+                            nonlocal chunk_content, full_report_content
+                            chunk_content = partial_content
+                            # Update full report content with separator and current chunk content
+                            if i == 1:
+                                updated_full_content = separator + chunk_content
+                            else:
+                                updated_full_content = full_report_content.rsplit(separator, 1)[0] + separator + chunk_content
+                            # Update UI
+                            current_display = f"{updated_full_content}\n\n---\n\n**目前已生成摘要 {i-1}/{len(chunks)} 部分**"
+                            try:
+                                md_container.set_content(current_display)
+                            except Exception:
+                                pass
+                        await generate_segmented_content_async(
+                            i, len(chunks), chunk['text'], chunk_vision_frames, state.config, prev_abstracts_str, on_stream=on_content_stream
                         )
                         
-                        # Merge the TOC from this chunk into accumulated TOC
-                        if chunk_toc:
-                            accumulated_toc = merge_tocs(accumulated_toc, chunk_toc)
-                            print(f"[Chunk {i}] Accumulated TOC length: {len(accumulated_toc)} chars")
-                        
-                        print(f"[Chunk {i}] Summary generation completed. Success: {success}, Response length: {len(chunk_full_response)}")
-                        
-                        # Enhanced robustness for the last chunk: longer delay and multiple UI updates
-                        is_last_chunk = i == len(chunks)
-                        if is_last_chunk:
-                            # For last chunk, add longer delay and ensure UI is fully updated
-                            try:
-                                md_container.set_content(final_display_text)
-                                await asyncio.sleep(0.5)  # Longer delay for last chunk (500ms)
-                                # Second UI update to ensure it's rendered
-                                md_container.set_content(final_display_text)
-                                await asyncio.sleep(0.2)  # Additional delay
-                            except Exception:
-                                pass  # Ignore UI update errors
+                        # Add chunk separator and content to full report
+                        if i == 1:
+                            full_report_content = separator + chunk_content
                         else:
-                            # For non-last chunks, shorter delay
+                            full_report_content = full_report_content.rsplit(separator, 1)[0] + separator + chunk_content
+                        
+                        # Generate abstract for this chunk
+                        step_ai.props(f'caption="正在生成第 {i}/{len(chunks)} 部分摘要..."')
+                        abstract = ""
+                        
+                        def on_abstract_stream(partial_abstract):
+                            nonlocal abstract
+                            abstract = partial_abstract
+                            # Update UI with current abstract
+                            current_display = f"{full_report_content}\n\n---\n\n**目前已生成摘要 {i}/{len(chunks)} 部分**\n{'-' * 40}\n{abstract}"
                             try:
-                                md_container.set_content(final_display_text)
-                                await asyncio.sleep(0.1)  # Small delay after UI update
+                                md_container.set_content(current_display)
                             except Exception:
-                                pass  # Ignore UI update errors
+                                pass
                         
-                        # Add completed chunk to context if successful
-                        if success and chunk_full_response:
-                            # Extract structured brief for context and TOC
-                            # 1. Try to find the One-Liner (Blockquote)
-                            one_liner_match = re.search(r"^>\s*(.*?)(?:\n|$)", chunk_full_response, re.MULTILINE)
-                            one_liner = one_liner_match.group(1).strip() if one_liner_match else ""
-                            
-                            # 2. Extract all H2/H3 headers to capture topics
-                            headers = re.findall(r"^(?:##|###)\s+(.*)", chunk_full_response, re.MULTILINE)
-                            headers_text = "\n".join([f"- {h}" for h in headers])
-                            
-                            # 3. Construct Brief
-                            if one_liner or headers:
-                                brief = f"{one_liner}\n\nKey Topics:\n{headers_text}"
-                            else:
-                                brief = chunk_full_response[:500] + "..."
-                                
-                            chunk_context.append(f"部分 {i} 摘要:\n{brief}")
-                            chunk_briefs.append(f"Chunk {i} Summary:\n{brief}")
-                            
-                            # Update full_response with the new chunk content
-                            # Add chunk separator with chunk number before new chunk content
-                            if full_response:
-                                separator = f"\n\n{'=' * 60}\n第 {i} 分块\n{'=' * 60}\n\n"
-                                full_response += separator + chunk_full_response
-                            else:
-                                # First chunk: add separator at the beginning
-                                separator = f"{'=' * 60}\n第 {i} 分块\n{'=' * 60}\n\n"
-                                full_response = separator + chunk_full_response
+                        await generate_abstract_async(
+                            i, len(chunks), chunk_content, prev_abstracts_str, state.config, on_stream=on_abstract_stream
+                        )
                         
-                        # Update progress in history records
-                        update_progress(task_id, "AI Analysis", f"Chunk {i}/{len(chunks)} complete")
-
-                    # Generate final summary from all chunk summaries
-                    if len(chunks) > 1:
-                        step_ai.props('caption="Generating Final Summary..."')
-                    final_summary_prompt = f"""
-                    Please provide a comprehensive final summary of this video based on the following chunk summaries:
-                    
-                    {full_response}
-                    
-                    The final summary should:
-                    1. Synthesize key insights from all chunks
-                    2. Identify overarching themes and connections
-                    3. Provide a cohesive narrative of the entire video
-                    4. Include the most important quotes and takeaways
-                    """
-                    
-                    final_summary_text = ""
-                    # Store the content before final summary
-                    content_before_final = full_response
-                    
-                    # Add UI update throttling for final summary generation
-                    last_ui_update_time = time.time()
-                    ui_update_interval = 0.5  # Update UI at most every 0.5 seconds
-                    
-                    try:
-                        async for chunk_type, chunk_text in generate_summary_stream_async(
-                            f"{dl_res['title']} - Final Summary",
-                            final_summary_prompt,
-                            [],
-                            [],  # No vision frames for final summary to avoid token limit
-                            state.config,
-                            custom_prompt,
-                            complexity,
-                        ):
-                            if chunk_type == "content":
-                                # Accumulate final summary text
-                                final_summary_text += chunk_text
-                                # Append final summary to the end instead of prepending
-                                full_response = f"{content_before_final}\n\n---\n\n# Final Summary\n\n{final_summary_text}"
-                                
-                                # Throttle UI updates to prevent connection loss
-                                current_time = time.time()
-                                if current_time - last_ui_update_time >= ui_update_interval:
-                                    try:
-                                        md_container.set_content(full_response)
-                                        last_ui_update_time = current_time
-                                    except Exception as e:
-                                        print(f"UI update error during final summary: {e}")
-                                        pass  # Ignore UI update errors to prevent connection issues
-                                
-                                # 确保最终总结被正确保存到 final_display_text
-                                final_display_text = full_response
+                        all_abstracts.append(abstract)
+                        full_abstract_content += f"\n{'-' * 40}\n{abstract}\n"
                         
-                        # Final UI update after generation completes
+                        # Update UI with current progress
+                        current_display = f"{full_report_content}\n\n---\n\n**目前已生成摘要 {i}/{len(chunks)} 部分**"
                         try:
-                            md_container.set_content(final_display_text)
-                            await asyncio.sleep(0.1)  # Small delay to ensure UI update
-                        except Exception as e:
-                            print(f"Final UI update error: {e}")
+                            md_container.set_content(current_display)
+                        except Exception:
                             pass
-                    except Exception as e:
-                        print(f"Error generating final summary: {e}")
-                        # Continue execution even if final summary fails
-                        pass
-
-                # Use accumulated TOC instead of generating a new one
-                if len(chunks) > 1 and accumulated_toc:
-                    step_ai.props('caption="Preparing final report with TOC..."')
-                    content_before_toc = full_response
-                    # Prepend accumulated TOC to the beginning
-                    full_response = f"{accumulated_toc}\n\n---\n\n{content_before_toc}"
-                    final_display_text = full_response
+                        
+                        update_progress(task_id, "AI Analysis", f"Chunk {i}/{len(chunks)} complete")
                     
+                    # Generate final contents.md from all abstracts
+                    step_ai.props(f'caption="正在生成最终目录和梗概..."')
+                    full_abstracts_text = "\n\n".join(all_abstracts)
+                    final_contents = await generate_final_contents_async(full_abstracts_text, state.config)
+                    
+                    # Combine final contents with full report for report.md
+                    final_report = f"{final_contents}\n\n---\n\n{full_report_content}"
+                    
+                    # Update UI with final result
                     try:
-                        md_container.set_content(final_display_text)
-                        await asyncio.sleep(0.1)  # Small delay to ensure UI update
-                    except Exception as e:
-                        print(f"Error updating UI with accumulated TOC: {e}")
+                        md_container.set_content(final_report)
+                    except Exception:
                         pass
+                    
+                    full_response = final_report
+                    final_display_text = final_report
+                    
+                    # Prepare files for download
+                    report_content = final_report
+                    abstract_content = full_abstract_content.strip()
+                    contents_content = final_contents
                 else:
                     # Non-chunk mode: process entire video at once
                     step_ai.props('caption="✍️ Generating summary..."')
@@ -2889,6 +3857,10 @@ def index():
                     except Exception:
                         pass
 
+                    # Initialize empty files for non-chunk mode
+                    abstract_content = ""
+                    contents_content = ""
+
                 # Clear AI step spinner and label
                 ai_spinner.delete()
                 lbl_ai.delete()
@@ -2918,51 +3890,124 @@ def index():
                 print(f"[Finalize] Debug: final_content_for_save content preview: {final_content_for_save[:200]}")
                 
                 final_task_dir, final_report = finalize_task(
-                    task_id, dl_res["title"], final_content_for_save
+                    task_id, dl_res["title"], final_content_for_save, abstract_content, contents_content
                 )
 
                 # Update displayed content with corrected paths
                 md_container.set_content(final_report)
 
-                # Enable TOC anchor links via JavaScript
+                # Enable TOC anchor links via JavaScript with enhanced DOM safety
                 await ui.run_javascript("""
                 (function() {
-                    // Find all headings in report-content
-                    const container = document.querySelector('.report-content');
-                    if (!container) return;
-                    
-                    const headings = container.querySelectorAll('h2, h3');
-                    headings.forEach(h => {
-                        // Create anchor ID from heading text (remove emojis and whitespace)
-                        const text = h.textContent.replace(/^[\\s🎯⚡💰📊🔬📑🏙️🌆🏛️💼🌊👤]*/, '').trim();
-                        const id = text.replace(/[\\s:：]+/g, '-').toLowerCase();
-                        h.id = id;
-                    });
-                    
-                    // Enable smooth scroll for all anchor links
-                    container.querySelectorAll('a[href^="#"]').forEach(a => {
-                        a.style.cursor = 'pointer';
-                        a.addEventListener('click', function(e) {
-                            e.preventDefault();
-                            const href = this.getAttribute('href');
-                            const targetId = decodeURIComponent(href.substring(1));
-                            // Try exact match first, then fuzzy match
-                            let target = document.getElementById(targetId);
-                            if (!target) {
-                                // Fuzzy match: find heading containing the text
-                                const searchText = targetId.replace(/-/g, '').toLowerCase();
-                                headings.forEach(h => {
-                                    const hText = h.textContent.replace(/[\\s:：🎯⚡💰📊🔬📑🏙️🌆🏛️💼🌊👤]/g, '').toLowerCase();
-                                    if (hText.includes(searchText) || searchText.includes(hText)) {
-                                        target = h;
+                    // Enhanced DOM safety with comprehensive error handling using global monitor
+                    function safeProcessTOC() {
+                        try {
+                            // Use global DOM safety monitor if available
+                            const domMonitor = window.oanDomSafetyMonitor;
+                            
+                            // Find all headings in report-content with safety checks
+                            const container = domMonitor ? 
+                                domMonitor.safeQuerySelector('.report-content') : 
+                                document.querySelector('.report-content');
+                            
+                            if (!container || !container.isConnected) {
+                                console.warn('TOC container not found or disconnected');
+                                return;
+                            }
+                            
+                            const headings = container.querySelectorAll('h2, h3');
+                            headings.forEach(h => {
+                                if (h && h.isConnected) {
+                                    try {
+                                        // Create anchor ID from heading text (remove emojis and whitespace)
+                                        const text = h.textContent.replace(/^[\\s🎯⚡💰📊🔬📑🏙️🌆🏛️💼🌊👤]*/, '').trim();
+                                        const id = text.replace(/[\\s:：]+/g, '-').toLowerCase();
+                                        h.id = id;
+                                    } catch (e) {
+                                        console.warn('Failed to process heading:', e);
                                     }
-                                });
+                                }
+                            });
+                            
+                            // Enable smooth scroll for all anchor links with safety
+                            const links = container.querySelectorAll('a[href^="#"]');
+                            links.forEach(a => {
+                                if (a && a.isConnected) {
+                                    try {
+                                        a.style.cursor = 'pointer';
+                                        
+                                        // Remove existing listeners to prevent duplicates
+                                        a.removeEventListener('click', handleTOCClick);
+                                        a.addEventListener('click', handleTOCClick);
+                                    } catch (e) {
+                                        console.warn('Failed to setup TOC link:', e);
+                                    }
+                                }
+                            });
+                            
+                            // TOC click handler with comprehensive DOM safety
+                            function handleTOCClick(e) {
+                                e.preventDefault();
+                                try {
+                                    const href = this.getAttribute('href');
+                                    const targetId = decodeURIComponent(href.substring(1));
+                                    
+                                    // Try exact match first
+                                    let target = document.getElementById(targetId);
+                                    
+                                    if (!target || !target.isConnected) {
+                                        // Fuzzy match: find heading containing the text
+                                        const searchText = targetId.replace(/-/g, '').toLowerCase();
+                                        headings.forEach(h => {
+                                            if (h && h.isConnected) {
+                                                const hText = h.textContent.replace(/[\\s:：🎯⚡💰📊🔬📑🏙️🌆🏛️💼🌊👤]/g, '').toLowerCase();
+                                                if (hText.includes(searchText) || searchText.includes(hText)) {
+                                                    target = h;
+                                                }
+                                            }
+                                        });
+                                    }
+                                    
+                                    if (target && target.isConnected) {
+                                        // Use safe scrollIntoView if available
+                                        if (domMonitor && domMonitor.safeGetProperty(target, 'scrollIntoView')) {
+                                            target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                        } else {
+                                            target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                        }
+                                    }
+                                } catch (error) {
+                                    console.warn('TOC navigation failed:', error);
+                                }
                             }
-                            if (target) {
-                                target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                            
+                        } catch (error) {
+                            console.error('TOC processing failed:', error);
+                        }
+                    }
+                    
+                    // Use retry mechanism for TOC processing
+                    function processTOCWithRetry(retryCount = 0) {
+                        if (retryCount >= 3) {
+                            console.warn('TOC processing failed after 3 retries');
+                            return;
+                        }
+                        
+                        setTimeout(() => {
+                            safeProcessTOC();
+                            
+                            // Verify TOC was processed successfully
+                            const container = document.querySelector('.report-content');
+                            if (container && container.isConnected) {
+                                const headings = container.querySelectorAll('h2[id], h3[id]');
+                                if (headings.length === 0 && retryCount < 2) {
+                                    processTOCWithRetry(retryCount + 1);
+                                }
                             }
-                        });
-                    });
+                        }, retryCount * 200 + 100); // 100ms, 300ms, 500ms delays
+                    }
+                    
+                    processTOCWithRetry();
                 })();
                 """)
                 # Update existing temporary session instead of creating new one
@@ -3037,7 +4082,9 @@ def index():
                 except Exception as update_e:
                     print(f"Failed to update history with error: {update_e}")
             finally:
-                btn_start.enable()
+                # Ensure btn_start exists before trying to enable it
+                if 'btn_start' in globals():
+                    btn_start.enable()
 
     # --- System Log View ---
     with ui.expansion(
@@ -3109,6 +4156,8 @@ if __name__ in {"__main__", "__mp_main__"}:
 
     # Start Watchdog
     start_parent_watchdog()
+
+    check_first_launch_gpu_reminder()
 
     # NOTE: 'show=False' is critical for headless
     # 'reload=False' is recommended for the frozen binary
