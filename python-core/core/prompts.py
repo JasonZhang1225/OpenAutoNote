@@ -59,19 +59,23 @@ LAYOUT_FULL_ZH = dedent(r"""\
     - 复杂度 3：视内容体量和复杂度决定是否输出目录
     - 复杂度 1-2：不输出目录
 
-    #### 目录格式（可点击锚点）
-    - 目录紧跟在“核心洞察”之后。
-    - 目录仅收录：##（主章节）与 ###（子章节，可选）；子章节用缩进表示层级。
-    - 目录必须可跳转：每一项用 Markdown 锚点链接 `(#slug)`。
-    - slug 规则：使用“编号+空格+标题文字”，去掉表情符号与标点。
-      示例：`1 章节一标题` → `#1-章节一标题`；`1.1 小标题` → `#11-小标题`
+    #### 目录格式（表格目录，禁止 blockquote）
+    - 目录紧跟在"核心洞察"之后。
+    - 目录仅收录：##（主章节）与 ###（子章节，可选）。
+    - **目录区域禁止使用 `>`（块引用）写描述**。
+    - **必须使用 Markdown 表格输出目录**，每列：编号、章节标题（可跳转锚点）、一句话描述。
+    - 锚点规则：使用"编号+空格+标题文字"，去掉表情符号与标点。
+      示例：`1 章节一标题` → `#1-章节一标题`
 
     示例：
     ## 📑 目录
-    - [🎯 1 章节一标题](#1-章节一标题)
-      - [1.1 第二层级小标题](#11-第二层级小标题)
-      - [1.2 第二层级小标题](#12-第二层级小标题)
-    - [⚡ 2 章节二标题](#2-章节二标题)
+    - 目录必须使用 Markdown 表格，禁止用 `>` 写描述。
+
+    | 编号 | 章节标题 | 本章讲什么（1 句话） |
+    |---:|---|---|
+    | 1 | [🎯 章节一标题](#1-章节一标题) | 用一句话说明本章解决的问题 |
+    | 2 | [⚡ 章节二标题](#2-章节二标题) | 用一句话说明本章关键方法 |
+    | 3 | [💰 章节三标题](#3-章节三标题) | 用一句话说明本章核心结论 |
 
     正文写作规则：
     - 主章节用 `##`，标题前必须加语义表情符号，例如：`## 🎯 1 章节一标题`
@@ -90,10 +94,21 @@ LAYOUT_FULL_ZH = dedent(r"""\
     关键引用（必须）：
     - 提取视频里最重要的原话/对话（若转写疑似错误需先纠正再引用），用引用格式 `> `。
 
-    视觉证据（来自输入的视频帧，可选但严格）：
-    - 原则：宁缺毋滥。只在关键图表/PPT/独特细节处插入。
-    - 写法：把截图时间戳贴在最相关段落后，例如：`[12:34]`。
-""").strip()
+    时间戳引用（来自系统提供的视频帧，可选但严格）：
+    - **硬规则：禁止开『视觉证据汇总』章节！禁止在文末集中列出时间戳！**
+    - **硬规则：禁止输出任何图片链接或图片语法！禁止引用任何外部资源！**
+    - **硬规则：只能输出格式化时间戳标记，格式为 `[MM:SS]` 或 `[MM:SS-NN:SS]`**
+    - **系统会自动根据时间戳渲染对应的视频帧，AI不需要也不允许输出任何图片语法**
+    - 时间戳必须内联：在描述视频画面的段落后立即插入时间戳
+    - 原则：宁缺毋滥。只在关键图表/PPT/独特细节处引用
+    - 写法模板：
+      1. 段落解释画面意义（1-2句）
+      2. 紧接着插入格式化时间戳
+      示例：
+      > 该 PPT 图表清晰展示了 X 与 Y 的差异来自 Z 的影响 ...
+      [12:34]
+
+    写作规范：""").strip()
 # endregion layout_full_zh
 
 
@@ -175,19 +190,23 @@ LAYOUT_FULL_EN = dedent(r"""\
     - Complexity 3: include TOC if the content volume/structure warrants it
     - Complexity 1–2: no TOC
 
-    #### TOC Format (Clickable Anchors)
+    #### TOC Format (Table TOC, NO blockquote in TOC)
     - Place the TOC immediately after the Core Insight.
-    - Include only: ## (main sections) and ### (optional subsections). Use indentation for subsections.
-    - Every item must be a Markdown anchor link `(#slug)`.
-    - Slug rule: use “number + space + title text”, remove emojis and punctuation.
-      Example: `1 Section Title` → `#1-section-title`; `1.1 Subsection` → `#11-subsection`
+    - Include only: ## (main sections) and ### (optional subsections).
+    - **NEVER use `>` (blockquote) in the TOC area for descriptions**.
+    - **MUST use Markdown table for TOC**, columns: Number, Section Title (clickable anchor), One-sentence description.
+    - Anchor rule: use "number + space + title text", remove emojis and punctuation.
+      Example: `1 Section Title` → `#1-section-title`
 
     Example:
     ## 📑 Table of Contents
-    - [🎯 1 Section Title](#1-section-title)
-      - [1.1 Subsection Title](#11-subsection-title)
-      - [1.2 Subsection Title](#12-subsection-title)
-    - [⚡ 2 Section Title](#2-section-title)
+    - TOC must use Markdown table, do NOT use `>` for descriptions.
+
+    | # | Section Title | What This Section Covers (1 sentence) |
+    |---:|---|---|
+    | 1 | [🎯 Section Title](#1-section-title) | One sentence explaining what this section solves |
+    | 2 | [⚡ Section Title](#2-section-title) | One sentence explaining the key method |
+    | 3 | [💰 Section Title](#3-section-title) | One sentence explaining the core conclusion |
 
     Body writing rules:
     - Main sections must be `##` and MUST start with a semantic emoji, e.g., `## 🎯 1 Section Title`
@@ -207,9 +226,19 @@ LAYOUT_FULL_EN = dedent(r"""\
     - Extract the most important quotes/dialogue. Fix obvious ASR errors before quoting.
       Use blockquote `> `.
 
-    Visual evidence (optional but strict; based on provided frames):
-    - Principle: fewer but better. Insert only when the frame contains key charts/PPT/unique details.
-    - Format: place timestamp right after the relevant paragraph, e.g., `[12:34]`.
+    Timestamp references (based on provided video frames, optional but strict):
+    - **HARD RULE: DO NOT create a "Visual Evidence Summary" section! DO NOT list timestamps at the end!**
+    - **HARD RULE: DO NOT output any image links or image syntax! DO NOT reference any external resources!**
+    - **HARD RULE: ONLY output formatted timestamp markers in format `[MM:SS]` or `[MM:SS-NN:SS]`**
+    - **System will automatically render corresponding video frames based on timestamps, AI must NOT output any image syntax**
+    - Timestamps must be inline: insert immediately after paragraph describing video content
+    - Principle: fewer but better. Only reference when frame contains key charts/PPT/unique details
+    - Template:
+      1. Explain the visual content (1-2 sentences)
+      2. Immediately follow with formatted timestamp
+      Example:
+      > This PPT chart clearly shows the difference between X and Y comes from Z's influence...
+      [12:34]
 """).strip()
 # endregion layout_full_en
 
@@ -319,7 +348,10 @@ REPORT_FIRST_ZH = dedent(r"""\
     - 本段编号从 **1** 开始。
     - 章节标题建议带语义表情符号（如 🎯⚡💰⚠️🛠️📊🔮），但不要让 emoji 影响编号。
     - 拒绝流水账：不要“先讲…然后讲…”，直接用“观点 → 证据/细节 → 推导 → 结论”组织。
-    - 有关键画面/图表/产品细节时，在最相关段落后插入时间戳，如 `[12:34]`（来自输入帧）。
+    - **硬规则：禁止开『视觉证据汇总』章节！禁止在段末集中列出时间戳！**
+    - **硬规则：禁止输出任何图片语法！禁止引用任何外部资源！**
+    - **硬规则：只能输出格式化时间戳 `[MM:SS]`，系统会自动渲染对应视频帧**
+    - **视觉证据必须内联**：有关键画面/图表/产品细节时，在最相关段落后立刻插入时间戳，如 `[12:34]`（系统会自动渲染对应帧）。
 
     必须包含：
     - 关键观点与论证链（至少 1 个主章节）
@@ -346,7 +378,10 @@ REPORT_N_ZH = dedent(r"""\
     写作要求：
     - 章节标题建议带语义表情符号（🎯⚡💰⚠️🛠️📊🔮）。
     - 拒绝流水账：观点 → 证据/细节 → 推导 → 结论。
-    - 有关键画面/图表/产品细节时，在最相关段落后插入时间戳，如 `[12:34]`。
+    - **硬规则：禁止开『视觉证据汇总』章节！禁止在段末集中列出时间戳！**
+    - **硬规则：禁止输出任何图片语法！禁止引用任何外部资源！**
+    - **硬规则：只能输出格式化时间戳 `[MM:SS]`，系统会自动渲染对应视频帧**
+    - **视觉证据必须内联**：有关键画面/图表/产品细节时，在最相关段落后立刻插入时间戳，如 `[12:34]`（系统会自动渲染对应帧）。
 
     必须包含：
     - 关键引用（`> `）至少 1 条（如转写疑似错字需先纠正再引用）
@@ -470,7 +505,8 @@ REPORT_FIRST_EN = dedent(r"""\
     - Start numbering from **1**.
     - Emojis in headings are recommended (🎯⚡💰⚠️🛠️📊🔮) but must not break numbering.
     - No chronological narration. Use insight → evidence/details → reasoning → conclusion.
-    - If frames show key charts/PPT/product details, add timestamp after the relevant paragraph, e.g., `[12:34]`.
+    - **HARD RULE: DO NOT create a "Visual Evidence Summary" section! DO NOT list timestamps at the end of the section!**
+    - **Visual evidence MUST be inline**: If frames show key charts/PPT/product details, add timestamp immediately after the relevant paragraph, e.g., `[12:34]`.
 
     Must include:
     - A clear argument chain (at least one main section)
@@ -497,7 +533,8 @@ REPORT_N_EN = dedent(r"""\
     Requirements:
     - Emojis in headings are recommended (🎯⚡💰⚠️🛠️📊🔮).
     - Use insight → evidence/details → reasoning → conclusion.
-    - Add timestamps like `[12:34]` when frames provide key visual evidence.
+    - **HARD RULE: DO NOT create a "Visual Evidence Summary" section! DO NOT list timestamps at the end of the section!**
+    - **Visual evidence MUST be inline**: Add timestamps like `[12:34]` immediately after the relevant paragraph when frames provide key visual evidence.
     - If comparisons/specs appear → table output required.
 
     Must include:

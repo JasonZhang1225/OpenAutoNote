@@ -224,8 +224,8 @@ TRANSLATIONS = {
         "en": "2.  **Structured Table of Contents**",
     },
     "structured_toc_desc": {
-        "zh": "    -   在复杂度为 4 和 5 时必须生成目录！在复杂度为 3 时，你根据视频内容复杂度和内容量决定是否生成目录。在复杂度为 1、2 时不生成目录。\n    -   紧接着核心洞察之后，必须生成一个**可点击跳转的目录**。\n    -   格式要求：使用 Markdown 锚点链接，例如：\n    ```\n    ## 📑 目录\n    - [🎯 章节一标题](#章节一标题)\n    - [⚡ 章节二标题](#章节二标题)\n    - [💰 章节三标题](#章节三标题)\n    ```\n    -   每个章节标题在正文中使用 `## 🎯 章节一标题` 格式，确保锚点链接可以正确跳转。",
-        "en": "    -   Must be generated for complexity levels 4 and 5! For complexity level 3, decide whether to generate based on video content complexity and volume. Do not generate for complexity levels 1 and 2.\n    -   Immediately after the core insight, you must generate a **clickable table of contents**.\n    -   Format requirements: Use Markdown anchor links, for example:\n    ```\n    ## 📑 Table of Contents\n    - [🎯 Chapter 1 Title](#chapter-1-title)\n    - [⚡ Chapter 2 Title](#chapter-2-title)\n    - [💰 Chapter 3 Title](#chapter-3-title)\n    ```\n    -   Each chapter title in the main text uses the format `## 🎯 Chapter 1 Title` to ensure anchor links can jump correctly.",
+        "zh": "    -   在复杂度为 4 和 5 时必须生成目录！在复杂度为 3 时，你根据视频内容复杂度和内容量决定是否生成目录。在复杂度为 1、2 时不生成目录。\n    -   紧接着核心洞察之后，必须生成一个**可点击跳转的目录**。\n    -   **格式要求**：目录区域**禁止使用 `>`（块引用）写描述**！**必须使用 Markdown 表格输出目录**，每列：编号、章节标题（可跳转锚点）、一句话描述。\n    -   锚点规则：使用\"编号+空格+标题文字\"，去掉表情符号与标点。示例：`1 章节一标题` → `#1-章节一标题`\n    ```\n    ## 📑 目录\n    - 目录必须使用 Markdown 表格，禁止用 `>` 写描述。\n\n    | 编号 | 章节标题 | 本章讲什么（1 句话） |\n    |---:|---|---|\n    | 1 | [🎯 章节一标题](#1-章节一标题) | 用一句话说明本章解决的问题/核心结论 |\n    | 2 | [⚡ 章节二标题](#2-章节二标题) | 用一句话说明本章关键方法/关键证据 |\n    | 3 | [💰 章节三标题](#3-章节三标题) | 用一句话说明本章取舍/成本/影响 |\n    ```\n    -   每个章节标题在正文中使用 `## 🎯 章节一标题` 格式，确保锚点链接可以正确跳转。",
+        "en": "    -   Must be generated for complexity levels 4 and 5! For complexity level 3, decide whether to generate based on video content complexity and volume. Do not generate for complexity levels 1 and 2.\n    -   Immediately after the core insight, you must generate a **clickable table of contents**.\n    -   **Format requirements**: TOC area **MUST NOT use `>` (blockquotes) for descriptions**! **MUST use Markdown table for TOC**, columns: Number, Chapter Title (clickable anchor), One-sentence description.\n    -   Anchor rules: Use \"Number + Space + Title Text\", remove emoji and punctuation. Example: `1 Chapter Title` → `#1-chapter-title`\n    ```\n    ## 📑 Table of Contents\n    - TOC must use Markdown table, do NOT use `>` for descriptions.\n\n    | Number | Chapter Title | What This Chapter Covers (1 sentence) |\n    |---:|---|---|\n    | 1 | [🎯 Chapter 1 Title](#1-chapter-1-title) | Explain what problem this chapter solves |\n    | 2 | [⚡ Chapter 2 Title](#2-chapter-2-title) | Explain the key method/evidence in this chapter |\n    | 3 | [💰 Chapter 3 Title](#3-chapter-3-title) | Explain the trade-offs/costs/impact in this chapter |\n    ```\n    -   Each chapter title in the main text uses the format `## 🎯 Chapter 1 Title` to ensure anchor links can jump correctly.",
     },
     "structured_sections": {
         "zh": "3.  **结构化章节**",
@@ -248,8 +248,8 @@ TRANSLATIONS = {
         "en": "5.  **Visual Evidence (Selective Images)**",
     },
     "visual_evidence_desc": {
-        "zh": "    -   **原则**：宁缺毋滥。仅在关键时刻（PPT图表、独特产品细节）插入截图。\n    -   **位置**：将截图时间戳 `[MM:SS]` 直接插入在最相关的段落之后。",
-        "en": "    -   **Principle**: Better to have none than too many. Only insert screenshots at critical moments (PPT charts, unique product details).\n    -   **Position**: Insert the screenshot timestamp `[MM:SS]` directly after the most relevant paragraph.",
+        "zh": "    -   **硬规则**：**禁止**开『视觉证据汇总/截图汇总/证据汇总』章节！**禁止**在文末集中列出时间戳！\n    -   **视觉证据必须内联**：每引用一帧，必须在最相关段落后立刻插入时间戳标记。\n    -   **原则**：宁缺毋滥。仅在关键时刻（PPT图表、独特产品细节）插入截图。\n    -   **写法模板**：\n      1. 段落解释画面意义（1-2句）\n      2. 紧接着插入时间戳标记\n      示例：`该 PPT 图表清晰展示了 X 与 Y 的差异来自 Z 的影响 ...` 然后紧跟 `[12:34]`",
+        "en": "    -   **HARD RULE**: **FORBIDDEN** to create a 'Visual Evidence Summary/Screenshot Summary' section! **FORBIDDEN** to list timestamps at the end!\n    -   **Visual evidence MUST be inline**: whenever you reference a frame, immediately insert the timestamp marker right after the relevant paragraph.\n    -   **Principle**: Better to have none than too many. Only insert screenshots at critical moments (PPT charts, unique product details).\n    -   **Template**:\n      1. Explain the visual content (1-2 sentences)\n      2. Immediately follow with timestamp marker\n      Example: `This PPT chart clearly shows X vs Y difference...` then immediately `[12:34]`",
     },
     "math_formulas": {
         "zh": "6.  **数学公式 (必须使用LaTeX格式)**",
@@ -260,8 +260,8 @@ TRANSLATIONS = {
         "en": "    -   If mathematical formulas, equations or symbols appear in the video, **must** output using LaTeX format.\n    -   **STRICTLY FORBIDDEN**: Do NOT use `\[ ... \]` or `\( ... \)` format.\n    -   Inline formulas **MUST** use `$...$` wrapping, e.g., `$E=mc^2$`\n    -   Block formulas **MUST** use `$$...$$` wrapping, e.g., `$$\\sum_{i=1}^n x_i$$`\n    -   Ensure standard LaTeX syntax compatible with KaTeX.",
     },
     "chunk_summary_requirements": {
-        "zh": "### 分块总结要求\n\n**重要说明**：这是分段处理模式，您需要为视频的一个片段生成摘要。\n\n1.  **结构化摘要**：每个部分必须包含清晰的结构，包括核心观点、主要内容和关键要点。\n2.  **关键引用**：必须提取视频中最重要的引用和对话，使用引用格式 (`> `) 进行引用。\n3.  **时间范围**：在开头明确标注该部分的时间范围，例如 `[00:00-15:00]`。\n4.  **独立性**：每个部分的摘要应独立完整，能够单独理解该部分内容。\n5.  **上下文保留**：保留足够的上下文信息，以便后续生成总总结时能够理解各部分之间的联系。\n6.  **连续编号**：请注意这是系列报告的一部分。如果上一部分的最后一个章节编号是 2，那么这一部分必须从 3 开始编号。保持整体结构的连贯性，确保章节编号连续且不重复。\n7.  **禁止多余内容**：**严禁**在输出开头或结尾添加总结、版权声明、免责声明、思考过程说明等多余内容。只输出该部分的核心内容，不要添加任何形式的开场白或结束语。思考过程应通过推理功能输出，而不是在正文内容中。\n8.  **Markdown格式层级**：严格按照二级标题（`##`）、三级标题（`###`）、四级标题（`####`）的层级结构组织内容，确保层级清晰且连续。",
-        "en": "### Chunk Summary Requirements\n\n1.  **Structured Summary**: Each chunk must have a clear structure including core viewpoints, main content, and key points.\n2.  **Key Quotes**: Must extract the most important quotes and dialogues from the video, using `> ` format for quotes.\n3.  **Time Range**: Clearly indicate the time range of the chunk at the beginning, for example `[00:00-15:00]`.\n4.  **Independence**: Each chunk summary should be independently complete, allowing understanding of that section on its own.\n5.  **Context Preservation**: Retain sufficient contextual information to enable understanding of connections between chunks when generating the final summary.\n6.  **Continuous Numbering**: Note that this is part of a series report. If the last section number in the previous part was 2, this part MUST start with section 3. Maintain structural continuity.",
+        "zh": "### 分块总结要求\n\n**重要说明**：这是分段处理模式，您需要为视频的一个片段生成摘要。\n\n1.  **结构化摘要**：每个部分必须包含清晰的结构，包括核心观点、主要内容和关键要点。\n2.  **关键引用**：必须提取视频中最重要的引用和对话，使用引用格式 (`> `) 进行引用。\n3.  **时间范围**：在开头明确标注该部分的时间范围，例如 `[00:00-15:00]`。\n4.  **独立性**：每个部分的摘要应独立完整，能够单独理解该部分内容。\n5.  **上下文保留**：保留足够的上下文信息，以便后续生成总总结时能够理解各部分之间的联系。\n6.  **连续编号**：请注意这是系列报告的一部分。如果上一部分的最后一个章节编号是 2，那么这一部分必须从 3 开始编号。保持整体结构的连贯性，确保章节编号连续且不重复。\n7.  **禁止多余内容**：**严禁**在输出开头或结尾添加总结、版权声明、免责声明、思考过程说明等多余内容。只输出该部分的核心内容，不要添加任何形式的开场白或结束语。思考过程应通过推理功能输出，而不是在正文内容中。\n8.  **Markdown格式层级**：严格按照二级标题（`##`）、三级标题（`###`）、四级标题（`####`）的层级结构组织内容，确保层级清晰且连续。\n9.  **视觉证据内联规则**：\n    - **硬规则**：**禁止**在本段末尾追加『视觉证据汇总/截图汇总/证据汇总』章节！**禁止**在本段末尾集中列出时间戳！\n    - **视觉证据必须内联**：每引用一帧，必须在最相关段落后立刻插入时间戳标记 `[Time xx:xx-xx:xx]`。\n    - **原则**：宁缺毋滥。仅在关键时刻（PPT图表、独特产品细节）插入截图。\n    - **写法模板**：段落解释画面意义（1-2句）→ 紧接着插入时间戳标记。示例：`该 PPT 图表清晰展示了 X 与 Y 的差异...` 然后紧跟 `[12:34]`。",
+        "en": "### Chunk Summary Requirements\n\n1.  **Structured Summary**: Each chunk must have a clear structure including core viewpoints, main content, and key points.\n2.  **Key Quotes**: Must extract the most important quotes and dialogues from the video, using `> ` format for quotes.\n3.  **Time Range**: Clearly indicate the time range of the chunk at the beginning, for example `[00:00-15:00]`.\n4.  **Independence**: Each chunk summary should be independently complete, allowing understanding of that section on its own.\n5.  **Context Preservation**: Retain sufficient contextual information to enable understanding of connections between chunks when generating the final summary.\n6.  **Continuous Numbering**: Note that this is part of a series report. If the last section number in the previous part was 2, this part MUST start with section 3. Maintain structural continuity.\n7.  **Visual Evidence Inline Rules**:\n    - **HARD RULE**: **FORBIDDEN** to append a 'Visual Evidence Summary/Screenshot Summary' section at the end of this chunk! **FORBIDDEN** to list timestamps at the end of this chunk!\n    - **Visual evidence MUST be inline**: whenever you reference a frame, immediately insert the timestamp marker `[Time xx:xx-xx:xx]` right after the relevant paragraph.\n    - **Principle**: Better to have none than too many. Only insert screenshots at critical moments (PPT charts, unique product details).\n    - **Template**: Explain the visual content (1-2 sentences) → Immediately follow with timestamp marker. Example: `This PPT chart clearly shows X vs Y difference...` then immediately `[12:34]`.",
     },
     "non_chunk_full_requirements": {
         "zh": """### 完整视频总结要求
@@ -452,15 +452,16 @@ This abstract will accumulate and be passed to subsequent sections, letting late
 ```
 # 目录
 
-## 1. [第一部分标题]
-> 一句话梗概
+- 目录必须使用 Markdown 表格，**禁止用 `>` 写描述**！
 
-## 2. [第二部分标题]
-> 一句话梗概
+| 编号 | 章节标题 | 本章讲什么（1 句话） |
+|---:|---|---|
+| 1 | [🎯 第一部分标题](#1-第一部分标题) | 用一句话说明本章解决的问题/核心结论 |
+| 2 | [⚡ 第二部分标题](#2-第二部分标题) | 用一句话说明本章关键方法/关键证据 |
 
-...
+---
 
-## 100字以内内容梗概：
+**100字以内内容梗概**：
 [梗概内容]
 ```""",
         "en": """### Final Summary Requirements
@@ -476,15 +477,16 @@ Now you have the abstracts of all sections of this article. Based on the followi
 ```
 # Table of Contents
 
-## 1. [First Section Title]
-> One-sentence synopsis
+- TOC must use Markdown table, **do NOT use `>` for descriptions**!
 
-## 2. [Second Section Title]
-> One-sentence synopsis
+| Number | Chapter Title | What This Chapter Covers (1 sentence) |
+|---:|---|---|
+| 1 | [🎯 First Section Title](#1-first-section-title) | Explain what problem this section solves |
+| 2 | [⚡ Second Section Title](#2-second-section-title) | Explain the key method/evidence in this section |
 
-...
+---
 
-## Content Synopsis (within 100 characters):
+**Content Synopsis (within 100 characters)**:
 [Synopsis content]
 ```""",
     },

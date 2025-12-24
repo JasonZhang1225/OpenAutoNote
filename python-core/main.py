@@ -225,6 +225,7 @@ class State:
     def __init__(self):
         self.config = load_config()
         self.current_session = None
+        self._deleting_session = False  # Track deletion state to prevent race conditions
 
 
 state = State()
@@ -2191,16 +2192,19 @@ def index():
                                 )
 
                             # Context menu
-                            with ui.context_menu():
+                            with ui.context_menu() as menu:
 
                                 def open_rename(dlg=rename_dialog):
                                     dlg.open()
 
-                                async def delete_item(sid=session_id):
-                                    try:
-                                        await delete_sess_handler(sid)
-                                    except Exception as e:
-                                        print(f"Error in delete_item: {e}")
+                                def make_delete_handler(sid):
+                                    async def delete_handler():
+                                        try:
+                                            await delete_sess_handler(sid)
+                                        except Exception as e:
+                                            print(f"Error in delete_handler: {e}")
+                                            ui.notify(f"删除失败: {e}", type="negative")
+                                    return delete_handler
 
                                 ui.menu_item(
                                     get_text("rename", state.config["ui_language"]),
@@ -2209,7 +2213,7 @@ def index():
                                 ui.separator()
                                 ui.menu_item(
                                     get_text("delete", state.config["ui_language"]),
-                                    on_click=delete_item,
+                                    on_click=make_delete_handler(session_id),
                                 ).classes("text-red-500")
 
             history_list()
@@ -2255,9 +2259,16 @@ def index():
 
     @ui.refreshable
     def main_content():
+        # Clear container content but preserve layout classes
         main_container.clear()
-        # Reset to default classes when refreshing
-        main_container.classes(remove="w-full max-w-[95%]", add="w-full max-w-5xl mx-auto")
+        # Only reset classes if not in split view mode to preserve layout state
+        if state.current_session:
+            # In split view, keep the wider layout
+            main_container.classes(remove="max-w-5xl mx-auto", add="w-full max-w-[95%]")
+        else:
+            # In normal view, use standard layout
+            main_container.classes(remove="w-full max-w-[95%]", add="w-full max-w-5xl mx-auto")
+        
         with main_container:
             if state.current_session:
                 render_history_view(state.current_session)
@@ -2265,16 +2276,34 @@ def index():
                 render_input_view()
 
     async def delete_sess_handler(sess_id):
+        # Prevent concurrent deletions
+        if state._deleting_session:
+            return
+            
+        state._deleting_session = True
+        
         try:
-            # First delete files in background
-            await run.io_bound(delete_session, sess_id)
-            # Then refresh UI
-            history_list.refresh()
+            # Handle current session if it's the one being deleted
             if state.current_session and state.current_session["id"] == sess_id:
-                new_note_handler()
+                state.current_session = None
+                main_content.refresh()
+            
+            # Optimistic UI update: Remove from UI first
+            sessions = load_history()
+            filtered_sessions = [s for s in sessions if s["id"] != sess_id]
+            save_history(filtered_sessions)
+            
+            # Then delete files in background (this can be slower)
+            await run.io_bound(delete_session, sess_id)
+            
+            # Reload the page to avoid DOM conflicts
+            ui.run_javascript("location.reload()")
+            
         except Exception as e:
             print(f"Error deleting session: {e}")
             ui.notify(f"删除失败: {e}", type="negative")
+        finally:
+            state._deleting_session = False
 
     def load_session(sess_id):
         state.current_session = get_session(sess_id)
@@ -2286,9 +2315,55 @@ def index():
 
     # --- Logic: View Renderers ---
 
+    def convert_timestamps_to_images(summary_content, project_dir):
+        """
+        Convert timestamp markers [MM:SS] to image tags using local video frames.
+        
+        Args:
+            summary_content: The summary text with timestamp markers
+            project_dir: The project directory containing the assets folder
+            
+        Returns:
+            Modified content with timestamp markers replaced by image tags
+        """
+        if not summary_content or not project_dir:
+            return summary_content
+            
+        # Pattern to match timestamp markers like [07:15] or [12:34-15:20]
+        timestamp_pattern = r'\[((\d{1,2}):(\d{2}))(?:-(\d{1,2}):(\d{2}))?\]'
+        
+        def replace_timestamp(match):
+            # Extract timestamp components
+            full_match = match.group(0)
+            start_minutes = int(match.group(2))
+            start_seconds = int(match.group(3))
+            
+            # Convert to total seconds for frame filename
+            total_seconds = start_minutes * 60 + start_seconds
+            
+            # Construct frame filename (using 4-digit format)
+            frame_filename = f"frame_{total_seconds:04d}.jpg"
+            
+            # Construct image path
+            image_path = os.path.join(project_dir, "assets", frame_filename)
+            
+            # Check if the frame file exists
+            if os.path.exists(image_path):
+                # Return Markdown image tag with timestamp as alt text
+                return f"![Frame at {match.group(1)}]({image_path})"
+            else:
+                # If frame doesn't exist, return the original timestamp marker
+                # This preserves the timestamp for debugging
+                logger.warning(f"Frame not found: {image_path}")
+                return full_match
+        
+        # Replace all timestamp markers with image tags
+        modified_content = re.sub(timestamp_pattern, replace_timestamp, summary_content)
+        
+        return modified_content
+
     def render_history_view(session):
-        # Widen container for split view
-        main_container.classes(remove="max-w-5xl mx-auto", add="w-full max-w-[95%]")
+        # Layout classes are now managed by main_content() to prevent state corruption
 
         # State
         project_dir = session.get("project_dir", "")
@@ -2353,8 +2428,10 @@ def index():
 
                     ui.separator().classes("mb-6")
 
-                    # Summary Report
-                    ui.markdown(session.get("summary", ""), extras=['latex']).classes(
+                    # Summary Report - Convert timestamps to images before rendering
+                    summary_content = session.get("summary", "")
+                    processed_summary = convert_timestamps_to_images(summary_content, project_dir)
+                    ui.markdown(processed_summary, extras=['latex']).classes(
                         "w-full prose prose-lg prose-slate report-content max-w-none"
                     )
 
