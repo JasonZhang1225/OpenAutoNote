@@ -1306,6 +1306,19 @@ def index():
         'background-color: #FFFBFE; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";'
     )
 
+    # Check if CUDA mode is selected but PyTorch CUDA is not installed
+    if state.config.get("hardware_mode") == "cuda":
+        torch_installed, cuda_version = check_torch_cuda_installed()
+        if not torch_installed:
+            detected_cuda = detect_cuda_version()
+            if detected_cuda:
+                # Show notification to install PyTorch CUDA
+                ui.timer(1.0, lambda: ui.notify(
+                    f"检测到您选择了 CUDA 模式，但 PyTorch CUDA 未安装。请在设置中点击「下载 PyTorch CUDA」按钮进行安装。",
+                    type="warning",
+                    timeout=10000
+                ), once=True)
+
     # --- Top Bar ---
     # --- Top Bar (Modern/Flat) ---
     with ui.header().classes(
