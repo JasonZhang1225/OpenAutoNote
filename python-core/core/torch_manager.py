@@ -132,7 +132,7 @@ def install_torch_cuda(cuda_version, progress_callback=None):
 
         uninstall_cmd = [
             sys.executable, "-m", "pip", "uninstall", "-y",
-            "torch", "torchvision", "torchaudio"
+            "torch", "torchvision"
         ]
         run_command(uninstall_cmd, "卸载旧版本...")
 
@@ -142,7 +142,6 @@ def install_torch_cuda(cuda_version, progress_callback=None):
             "--index-url", index_url,
             f"torch>={torch_version_range[0]}" if torch_version_range[1] is None else f"torch>={torch_version_range[0]},<{torch_version_range[1]}",
             "torchvision",
-            "torchaudio",
             "--no-deps"
         ]
 

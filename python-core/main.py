@@ -155,7 +155,7 @@ def check_first_launch_gpu_reminder():
                     ui.label("安装 GPU 版 PyTorch 可以显著提升视频处理速度（通常提升 2-5 倍）").classes("text-sm text-gray-700 mb-4")
 
                     ui.label("安装命令：").classes("text-sm font-bold mt-2")
-                    install_cmd = f"pip3 install torch torchvision torchaudio --index-url https://mirrors.nju.edu.cn/pytorch/whl/{cuda_version}"
+                    install_cmd = f"pip3 install torch torchvision --index-url https://mirrors.nju.edu.cn/pytorch/whl/{cuda_version}"
                     with ui.row().classes("w-full items-center gap-2 mt-1"):
                         ui.textarea(value=install_cmd).classes("flex-1 text-sm font-mono").props("readonly outlined")
                         def copy_cmd():
