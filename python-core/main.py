@@ -2444,7 +2444,7 @@ def index():
                     # Summary Report - Convert timestamps to images before rendering
                     summary_content = session.get("summary", "")
                     processed_summary = convert_timestamps_to_images(summary_content, project_dir)
-                    ui.markdown(processed_summary, extras=['latex']).classes(
+                    ui.markdown(processed_summary, extras=['latex', 'tables']).classes(
                         "w-full prose prose-lg prose-slate report-content max-w-none"
                     )
 
@@ -2629,7 +2629,7 @@ def index():
                                             "text-sm text-gray-800 whitespace-pre-wrap"
                                         )
                                 else:
-                                    ui.markdown(content, extras=['latex']).classes(
+                                    ui.markdown(content, extras=['latex', 'tables']).classes(
                                         "text-sm text-gray-800 prose prose-sm max-w-none"
                                     )
 
@@ -2731,7 +2731,7 @@ def index():
                                     ui.label("AI").classes(
                                         "font-bold text-xs text-primary bg-purple-50 px-2 py-0.5 rounded-md self-start"
                                     )
-                                    streaming_md["ref"] = ui.markdown("▌", extras=['latex']).classes(
+                                    streaming_md["ref"] = ui.markdown("▌", extras=['latex', 'tables']).classes(
                     "text-sm text-gray-800 prose prose-sm max-w-none"
                 )
                             chat_scroll.scroll_to(percent=1.0)
@@ -3750,11 +3750,11 @@ def index():
                             "Thinking Process (AI Reasoning)", icon="psychology"
                         ).classes("w-full mb-4 bg-purple-50 rounded hidden")
                         with reasoning_exp:
-                            reasoning_label = ui.markdown(extras=['latex']).classes(
+                            reasoning_label = ui.markdown(extras=['latex', 'tables']).classes(
                                 "text-sm text-purple-800 p-2"
                             )
 
-                        md_container = ui.markdown(extras=['latex']).classes(
+                        md_container = ui.markdown(extras=['latex', 'tables']).classes(
                         "w-full prose prose-lg max-w-none report-content"
                     )
                 except RuntimeError:
