@@ -1,3 +1,5 @@
+
+**重要提示：目前还很不完善，仅能保证在 mac 上通过手动运行 main.py 来运行程序。您必须主动安装 requirements 和 ffmpeg！而windows 还有问题！！！不推荐日用**
 # OpenAutoNote 📝🤖
 
 <div align="center">
