@@ -22,5 +22,8 @@ src-tauri/bin/aria2c-*
 python-core/user_config.json
 python-core/user_history.json
 python-core/cookies.txt
+python-core/.env
+python-core/secrets.json
 generate/
 *.oan
+python-core/generate/

@@ -1,9 +1,3 @@
-nicegui
-yt-dlp
-openai
+-r requirements.txt
 pyinstaller
 faster-whisper
-psutil
-opencv-python-headless
-huggingface_hub
-latex2mathml

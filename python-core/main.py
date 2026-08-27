@@ -51,7 +51,13 @@ original_stderr = sys.stderr
 from openai import AsyncOpenAI
 
 from core.downloader import download_video
-from core.transcriber import TranscriberFactory
+from core.stt import (
+    DEFAULT_STT_BACKEND,
+    TranscriptionResult,
+    TranscriberFactory,
+    load_stt_env,
+    resolve_stt_backend,
+)
 from core.visual_processor import process_video_for_vision, extract_frame
 from core import model_manager
 from core.torch_manager import check_torch_cuda_installed, install_torch_cuda, detect_cuda_version, get_torch_install_status
@@ -77,12 +83,16 @@ from core.storage import (
 )
 
 # --- Configuration & State ---
+load_stt_env()
 CONFIG_FILE = os.path.join(BASE_DIR, "user_config.json")
 DEFAULT_CONFIG = {
     "api_key": "",
     "base_url": "https://api.openai.com/v1",
     "model_name": "gpt-4o",
     "asr_model": "small",
+    "stt_backend": DEFAULT_STT_BACKEND,
+    "dashscope_api_key": "",
+    "dashscope_region": "beijing",
     "language": "Simplified Chinese (Default)",
     "hardware_mode": "mlx",
     "enable_vision": True,
@@ -204,14 +214,19 @@ def load_config():
     if cfg.get("hardware_mode") not in hardware_info["valid_modes"]:
         cfg["hardware_mode"] = hardware_info["type"]
 
-    # Ensure ASR model is valid for the current hardware backend
-    supported_models = model_manager.get_supported_models(cfg["hardware_mode"])
-    if cfg.get("asr_model") not in supported_models:
-        cfg["asr_model"] = (
-            "small"
-            if "small" in supported_models
-            else next(iter(supported_models.keys()), "small")
-        )
+    if not cfg.get("stt_backend"):
+        cfg["stt_backend"] = DEFAULT_STT_BACKEND
+
+    # Whisper model list only applies to the legacy local backend
+    stt_backend = resolve_stt_backend(cfg)
+    if stt_backend == "faster-whisper":
+        supported_models = model_manager.get_supported_models(cfg["hardware_mode"])
+        if cfg.get("asr_model") not in supported_models:
+            cfg["asr_model"] = (
+                "small"
+                if "small" in supported_models
+                else next(iter(supported_models.keys()), "small")
+            )
 
     return cfg
 
@@ -406,58 +421,60 @@ async def async_download(url):
 
 async def async_transcribe(video_path, hardware_mode, progress_callback=None):
     def _t():
-        # Safety Fallback
         actual_mode = hardware_mode
-        
-        # Check for CUDA mode and ensure torch is installed
-        if hardware_mode == "cuda":
-            torch_installed, _ = check_torch_cuda_installed()
-            if not torch_installed:
-                # Try to detect CUDA and install torch
-                cuda_version = detect_cuda_version()
-                if cuda_version:
-                    ui.notify(f"检测到 CUDA {cuda_version}，但未安装 PyTorch CUDA 版本。正在自动下载...", type="info", timeout=5000)
-                    def progress_update(msg):
-                        print(f"[Torch Install] {msg}")
-                    
-                    success = install_torch_cuda(cuda_version, progress_update)
-                    if success:
-                        # Re-check after installation
-                        torch_installed, _ = check_torch_cuda_installed()
-                        if torch_installed:
-                            ui.notify("✅ PyTorch CUDA 安装成功！", type="positive")
+        stt_backend = resolve_stt_backend(state.config)
+
+        # Torch / MLX fallbacks only matter for the legacy local Whisper path.
+        if stt_backend == "faster-whisper":
+            if hardware_mode == "cuda":
+                torch_installed, _ = check_torch_cuda_installed()
+                if not torch_installed:
+                    cuda_version = detect_cuda_version()
+                    if cuda_version:
+                        print(f"[Torch Install] CUDA {cuda_version} detected, missing PyTorch CUDA build")
+
+                        def progress_update(msg):
+                            print(f"[Torch Install] {msg}")
+
+                        success = install_torch_cuda(cuda_version, progress_update)
+                        if success:
+                            torch_installed, _ = check_torch_cuda_installed()
+                            if not torch_installed:
+                                actual_mode = "cpu"
                         else:
-                            ui.notify("⚠️ PyTorch CUDA 安装完成，但无法验证。继续使用 CPU 模式", type="warning")
                             actual_mode = "cpu"
                     else:
-                        ui.notify("⚠️ PyTorch CUDA 安装失败，回退到 CPU 模式", type="warning")
                         actual_mode = "cpu"
-                else:
-                    ui.notify("⚠️ 未检测到 CUDA，回退到 CPU 模式", type="warning")
+                elif "cuda" not in hardware_info["valid_modes"]:
                     actual_mode = "cpu"
-            elif "cuda" not in hardware_info["valid_modes"]:
-                # torch is installed but CUDA not available
-                ui.notify("⚠️ PyTorch 已安装，但 CUDA 不可用，回退到 CPU 模式", type="warning")
+            elif hardware_mode == "mlx" and "mlx" not in hardware_info["valid_modes"]:
                 actual_mode = "cpu"
-        elif hardware_mode == "mlx" and "mlx" not in hardware_info["valid_modes"]:
-            ui.notify(
-                "⚠️ Apple Neural Engine not found, falling back to CPU", type="warning"
-            )
-            actual_mode = "cpu"
 
-        print(f"Transcribing with {actual_mode}...")
+        print(f"Transcribing with backend={stt_backend} hardware={actual_mode}...")
 
-        # China Mirror Setup
+        # China Mirror Setup (local whisper weights)
         if state.config.get("use_china_mirror"):
             os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 
         asr_model = state.config.get("asr_model", "small")
-        transcriber = TranscriberFactory.get_transcriber(actual_mode, asr_model)
-        
-        # Pass progress callback to transcriber for real-time updates
-        return transcriber.transcribe(video_path, progress_callback=progress_callback)
+        factory_backend = actual_mode if stt_backend == "faster-whisper" else stt_backend
+        transcriber = TranscriberFactory.get_transcriber(
+            factory_backend,
+            asr_model,
+            hardware_mode=actual_mode,
+            config=state.config,
+        )
 
-    ui.notify("Checking/Loading MLX Model...", type="info", timeout=3000)
+        result = transcriber.transcribe(video_path, progress_callback=progress_callback)
+        if isinstance(result, TranscriptionResult):
+            return result.segments
+        return result
+
+    stt_backend = resolve_stt_backend(state.config)
+    if stt_backend == "faster-whisper":
+        ui.notify("Checking/Loading local Whisper model...", type="info", timeout=3000)
+    else:
+        ui.notify(f"Starting STT ({stt_backend})...", type="info", timeout=3000)
     return await run.io_bound(_t)
 
 
@@ -894,7 +911,7 @@ async def generate_summary_stream_async(
     title, full_text, segments, vision_frames, config, custom_prompt="", complexity=3
 ):
     if not config["api_key"]:
-        yield "Error: API Key missing."
+        yield ("error", "Error: API Key missing.")
         return
 
     client = AsyncOpenAI(api_key=config["api_key"], base_url=config["base_url"])
@@ -1507,6 +1524,57 @@ def index():
                     ).bind_value(state.config, "model_name").classes("w-full").props(
                         'outlined dense item-aligned input-class="text-sm"'
                     )
+
+                    ui.separator().classes("opacity-30 my-1")
+                    ui.label(
+                        get_text("lbl_stt_section", state.config["ui_language"])
+                    ).classes("text-sm font-bold text-gray-700")
+                    ui.select(
+                        label=get_text("lbl_stt_backend", state.config["ui_language"]),
+                        options={
+                            "qwen3-asr-flash-filetrans": get_text(
+                                "stt_backend_filetrans", state.config["ui_language"]
+                            ),
+                            "qwen3-asr-flash": get_text(
+                                "stt_backend_flash", state.config["ui_language"]
+                            ),
+                            "qwen3-asr-local": get_text(
+                                "stt_backend_local", state.config["ui_language"]
+                            ),
+                            "faster-whisper": get_text(
+                                "stt_backend_whisper", state.config["ui_language"]
+                            ),
+                        },
+                    ).bind_value(state.config, "stt_backend").classes("w-full").props(
+                        "outlined dense options-dense"
+                    )
+                    ui.input(
+                        get_text("lbl_dashscope_key", state.config["ui_language"]),
+                        password=True,
+                    ).bind_value(state.config, "dashscope_api_key").classes(
+                        "w-full"
+                    ).props(
+                        'outlined dense item-aligned input-class="text-sm" placeholder="DASHSCOPE_API_KEY"'
+                    )
+                    ui.select(
+                        label=get_text(
+                            "lbl_dashscope_region", state.config["ui_language"]
+                        ),
+                        options={
+                            "beijing": get_text(
+                                "dashscope_region_beijing",
+                                state.config["ui_language"],
+                            ),
+                            "intl": get_text(
+                                "dashscope_region_intl", state.config["ui_language"]
+                            ),
+                        },
+                    ).bind_value(state.config, "dashscope_region").classes(
+                        "w-full"
+                    ).props("outlined dense options-dense")
+                    ui.label(
+                        get_text("dashscope_key_hint", state.config["ui_language"])
+                    ).classes("text-xs text-gray-500")
                     
                     # 深度思考开关
                     with ui.row().classes("w-full justify-between items-center px-1"):
@@ -3692,10 +3760,27 @@ def index():
                         # Note: We do NOT save history here to avoid IO blocking
                     queue_ui_update(_update_ts)
 
-                segments = await async_transcribe(
-                    dl_res["video_path"], state.config["hardware_mode"], transcript_progress_callback
-                )
-                transcript_text = " ".join([s["text"] for s in segments])
+                try:
+                    segments = await async_transcribe(
+                        dl_res["video_path"], state.config["hardware_mode"], transcript_progress_callback
+                    )
+                except Exception as transcribe_error:
+                    err = str(transcribe_error)
+                    print(f"[STT] Transcription failed: {err}")
+                    lbl_ts.text = f"❌ {err}"
+                    step_ts.props("icon=error color=negative")
+                    ui.notify(
+                        f"转写失败: {err}",
+                        type="negative",
+                        position="top",
+                        close_button=True,
+                        timeout=0,
+                    )
+                    btn_start.enable()
+                    return
+                if not segments:
+                    segments = []
+                transcript_text = " ".join([s.get("text", "") for s in segments])
                 lbl_ts.text = f"Transcribed {len(segments)} segments."
                 
                 # Show transcript card after transcription complete
@@ -4230,6 +4315,12 @@ def start_parent_watchdog():
     t.start()
 
 
+@app.get("/health")
+def health():
+    """Liveness probe for the Tauri splash / sidecar handshake."""
+    return {"ok": True, "service": "openautonote"}
+
+
 if __name__ in {"__main__", "__mp_main__"}:
     import multiprocessing
 
@@ -4240,20 +4331,33 @@ if __name__ in {"__main__", "__mp_main__"}:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8964, help="Port to bind to")
     parser.add_argument(
+        "--host",
+        type=str,
+        default="127.0.0.1",
+        help="Bind address (default 127.0.0.1)",
+    )
+    parser.add_argument(
+        "--watchdog",
+        action="store_true",
+        help="Exit if the parent process (Tauri) dies",
+    )
+    parser.add_argument(
         "--secret", type=str, default="gemini_secret", help="Storage secret"
     )
     args = parser.parse_args()
 
-    # Start Watchdog
-    start_parent_watchdog()
+    # Only watch the Tauri parent when launched as a sidecar, not `python main.py`.
+    if args.watchdog or os.environ.get("OPENAUTONOTE_WATCHDOG") == "1":
+        start_parent_watchdog()
 
     check_first_launch_gpu_reminder()
 
     # NOTE: 'show=False' is critical for headless
     # 'reload=False' is recommended for the frozen binary
-    print(f"Starting OpenAutoNote on port {args.port}...")
+    print(f"Starting OpenAutoNote on {args.host}:{args.port}...")
     ui.run(
         title="OpenAutoNote",
+        host=args.host,
         port=args.port,
         show=False,  # <--- Headless usage
         reload=False,  # <--- Disable auto-reload for sidecar

@@ -1,80 +1,74 @@
 #!/usr/bin/env python3
 """
 OpenAutoNote Installer
-Helps install the correct dependencies based on your hardware.
+Installs the default (Qwen3-ASR cloud) stack, with optional local Whisper extras.
 """
 
+import os
 import subprocess
 import sys
-import os
+
 
 def main():
     print("=" * 50)
     print("  OpenAutoNote - Dependency Installer")
     print("=" * 50)
     print()
-    
-    # Detect OS
+
+    here = os.path.dirname(os.path.abspath(__file__))
+    os.chdir(here)
+
+    extra = None
     if sys.platform == "darwin":
-        print("[INFO] Detected macOS (Apple Silicon optimized)")
-        req_file = "requirements_mac.txt"
+        print("[INFO] Detected macOS")
+        print("  [1] Default (Qwen3-ASR 云端转写，推荐)")
+        print("  [2] Default + local MLX Whisper")
+        choice = input("Your choice (1/2, default 1): ").strip() or "1"
+        req_file = "requirements.txt"
+        if choice == "2":
+            extra = "requirements_mac.txt"
     elif sys.platform == "win32":
         print("[INFO] Detected Windows")
-        print()
-        print("Do you have an NVIDIA GPU with CUDA support?")
-        print("  [Y] Yes - Install GPU-accelerated version (~3GB)")
-        print("  [N] No  - Install CPU-only version (~200MB)")
-        print()
-        
-        while True:
-            choice = input("Your choice (y/n): ").strip().lower()
-            if choice in ('y', 'yes'):
-                req_file = "requirements_cuda.txt"
-                print()
-                print("[INFO] Installing CUDA 12.1 GPU version...")
-                break
-            elif choice in ('n', 'no'):
-                req_file = "requirements_wincpu.txt"
-                print()
-                print("[INFO] Installing CPU-only version...")
-                break
-            else:
-                print("Invalid input. Please enter 'y' or 'n'.")
+        print("  [1] Default (Qwen3-ASR cloud STT, recommended)")
+        print("  [2] Default + local faster-whisper (CPU)")
+        print("  [3] Default + local faster-whisper (CUDA)")
+        choice = input("Your choice (1/2/3, default 1): ").strip() or "1"
+        req_file = "requirements.txt"
+        if choice == "2":
+            extra = "requirements_win_cpu.txt"
+        elif choice == "3":
+            extra = "requirements_win_cuda.txt"
     else:
-        print(f"[INFO] Detected Linux ({sys.platform})")
-        print("Using CUDA requirements by default. Edit if needed.")
-        req_file = "requirements_cuda.txt"
-    
-    # Check if requirements file exists
-    if not os.path.exists(req_file):
-        print(f"[ERROR] Requirements file not found: {req_file}")
-        print("Please ensure you are running this script from the project root.")
-        sys.exit(1)
-    
-    print(f"[INFO] Using: {req_file}")
+        print(f"[INFO] Detected {sys.platform}")
+        req_file = "requirements.txt"
+
+    files = [req_file] + ([extra] if extra else [])
+    for req_file in files:
+        if not os.path.exists(req_file):
+            print(f"[ERROR] Requirements file not found: {req_file}")
+            print("Please run this script from python-core/.")
+            sys.exit(1)
+
+        cmd = [sys.executable, "-m", "pip", "install", "-r", req_file]
+        print(f"[CMD] {' '.join(cmd)}")
+        print("-" * 50)
+        try:
+            subprocess.run(cmd, check=True)
+        except subprocess.CalledProcessError as e:
+            print(f"[ERROR] Installation failed with code {e.returncode}")
+            sys.exit(1)
+
     print()
-    
-    # Run pip install
-    cmd = [sys.executable, "-m", "pip", "install", "-r", req_file]
-    print(f"[CMD] {' '.join(cmd)}")
-    print("-" * 50)
-    
-    try:
-        subprocess.run(cmd, check=True)
-        print()
-        print("=" * 50)
-        print("  ✅ Installation Complete!")
-        print("=" * 50)
-        print()
-        print("Next steps:")
-        print("  1. Run the app: python main.py")
-        print("  2. Open browser: http://localhost:8964")
-        print()
-    except subprocess.CalledProcessError as e:
-        print()
-        print(f"[ERROR] Installation failed with code {e.returncode}")
-        print("Please check the error messages above.")
-        sys.exit(1)
+    print("=" * 50)
+    print("  Installation complete")
+    print("=" * 50)
+    print()
+    print("Next steps:")
+    print("  1. Set DASHSCOPE_API_KEY (see ../README.md or .env.example)")
+    print("  2. Run: python main.py")
+    print("  3. Open: http://127.0.0.1:8964")
+    print()
+
 
 if __name__ == "__main__":
     main()

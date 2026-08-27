@@ -33,6 +33,38 @@ TRANSLATIONS = {
     "lbl_api_key": {"zh": "API 密钥", "en": "API Key"},
     "lbl_base_url": {"zh": "Base URL", "en": "Base URL"},
     "lbl_model": {"zh": "模型名称", "en": "Model Name"},
+    "lbl_stt_section": {"zh": "语音转写 (STT)", "en": "Speech-to-Text"},
+    "lbl_stt_backend": {"zh": "转写后端", "en": "STT backend"},
+    "stt_backend_filetrans": {
+        "zh": "Qwen3-ASR Filetrans（默认，长视频）",
+        "en": "Qwen3-ASR Filetrans (default, long audio)",
+    },
+    "stt_backend_flash": {
+        "zh": "Qwen3-ASR Flash（短音频 ≤5 分钟）",
+        "en": "Qwen3-ASR Flash (clips ≤5 min)",
+    },
+    "stt_backend_local": {
+        "zh": "Qwen3-ASR 本地 1.7B（需自行安装）",
+        "en": "Qwen3-ASR local 1.7B (optional install)",
+    },
+    "stt_backend_whisper": {
+        "zh": "faster-whisper / MLX（本地遗留）",
+        "en": "faster-whisper / MLX (legacy local)",
+    },
+    "lbl_dashscope_key": {"zh": "DashScope API Key", "en": "DashScope API Key"},
+    "lbl_dashscope_region": {"zh": "DashScope 地域", "en": "DashScope region"},
+    "dashscope_region_beijing": {
+        "zh": "北京 (dashscope.aliyuncs.com)",
+        "en": "Beijing (dashscope.aliyuncs.com)",
+    },
+    "dashscope_region_intl": {
+        "zh": "国际站 (dashscope-intl.aliyuncs.com)",
+        "en": "International (dashscope-intl.aliyuncs.com)",
+    },
+    "dashscope_key_hint": {
+        "zh": "也可使用环境变量 DASHSCOPE_API_KEY 或 python-core/.env。切勿把 Key 提交到 git。",
+        "en": "Or set DASHSCOPE_API_KEY in the environment / python-core/.env. Never commit the key.",
+    },
     # Generation Tab
     "lbl_enable_vision": {
         "zh": "启用多模态 (视觉分析)",
