@@ -3,10 +3,10 @@
     "version": "1.0.0",
     "identifier": "com.openautonote.app",
     "build": {
-        "beforeDevCommand": "cd python-core && ./oan2/bin/python main.py",
+        "beforeDevCommand": "node scripts/start-backend.js",
         "beforeBuildCommand": "",
-        "devUrl": "http://localhost:8964",
-        "frontendDist": "../dist-python"
+        "devUrl": "http://127.0.0.1:8964",
+        "frontendDist": "frontend"
     },
     "bundle": {
         "icon": [
@@ -35,7 +35,7 @@
         "windows": [
             {
                 "label": "main",
-                "url": "http://localhost:8964",
+                "url": "waiting.html",
                 "title": "OpenAutoNote",
                 "visible": false,
                 "width": 1200,

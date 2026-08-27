@@ -60,17 +60,21 @@ jobs:
             --add-binary "${OPENSSL_PREFIX}/lib/libcrypto.1.1.dylib:." \
             --hidden-import=psutil \
             --hidden-import=cv2 \
+            --hidden-import=core.stt \
+            --hidden-import=core.stt_dashscope \
+            --hidden-import=core.stt_local \
             --collect-all nicegui \
-            --collect-all openai
+            --collect-all openai \
+            --collect-all requests
           mkdir -p ../src-tauri/bin
           # Rename to match the target triple (Apple Silicon ARM64)
           mv dist/api-server ../src-tauri/bin/api-server-aarch64-apple-darwin
           cd ..
 
-      - name: Prepare Placeholder Assets
+      - name: Prepare frontend assets
         run: |
-          mkdir -p dist-python
-          echo '<html><body><h1>Connecting...</h1><script>window.location.href="http://localhost:8964"</script></body></html>' > dist-python/index.html
+          test -f src-tauri/frontend/splash.html
+          test -f src-tauri/frontend/waiting.html
 
       - name: Build Tauri
         run: |
@@ -163,8 +167,12 @@ jobs:
           pyinstaller -F main.py --name api-server \
             --hidden-import=psutil \
             --hidden-import=cv2 \
+            --hidden-import=core.stt \
+            --hidden-import=core.stt_dashscope \
+            --hidden-import=core.stt_local \
             --collect-all nicegui \
             --collect-all openai \
+            --collect-all requests \
             --collect-all cv2 \
             --collect-all faster_whisper \
             --collect-all ctranslate2 \
@@ -185,11 +193,11 @@ jobs:
           ls -la ../src-tauri/bin/
           cd ..
 
-      - name: Prepare Placeholder Assets
+      - name: Prepare frontend assets
         shell: bash
         run: |
-          mkdir -p dist-python
-          echo '<html><body><h1>Connecting...</h1><script>window.location.href="http://localhost:8964"</script></body></html>' > dist-python/index.html
+          test -f src-tauri/frontend/splash.html
+          test -f src-tauri/frontend/waiting.html
 
       - name: Build Tauri
         shell: bash

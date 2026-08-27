@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -26,6 +26,8 @@
       background: rgba(255,255,255,0.06);
       box-shadow: 0 12px 40px rgba(0,0,0,0.45);
       border: 1px solid rgba(255,255,255,0.08);
+      max-width: 360px;
+      text-align: center;
     }
     .spinner {
       width: 56px;
@@ -35,18 +37,17 @@
       border-radius: 50%;
       animation: spin 1s linear infinite;
     }
+    .spinner.error { border-top-color: #ff8a80; animation: none; }
     @keyframes spin { to { transform: rotate(360deg); } }
     .title { font-weight: 700; letter-spacing: 0.4px; }
-    .subtitle { opacity: 0.8; font-size: 0.95rem; }
-    img { width: 64px; height: 64px; border-radius: 14px; box-shadow: 0 6px 18px rgba(0,0,0,0.35); }
+    .subtitle { opacity: 0.8; font-size: 0.95rem; white-space: pre-wrap; }
   </style>
 </head>
 <body>
   <div class="card">
-    <img src="icons/128x128.png" alt="OpenAutoNote" />
-    <div class="spinner"></div>
-    <div class="title">Initializing AI Engine...</div>
-    <div class="subtitle">启动中，请稍候</div>
+    <div id="spinner" class="spinner"></div>
+    <div id="status-title" class="title">正在连接后端…</div>
+    <div id="status-sub" class="subtitle">Connecting to Python engine</div>
   </div>
 </body>
 </html>
