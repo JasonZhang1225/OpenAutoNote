@@ -1,10 +1,4 @@
-nicegui
-yt-dlp
-openai
+-r requirements.txt
 pyinstaller
 mlx-whisper
-psutil
 opencv-python
-huggingface_hub
-latex2mathml
-tiktoken

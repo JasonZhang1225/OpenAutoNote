@@ -1,106 +1,16 @@
-import abc
-from typing import List, Dict, Any
+"""Backward-compatible STT exports.
 
-from core import model_manager
+New code should import from ``core.stt``. This module keeps the historical
+``TranscriberFactory.get_transcriber(hardware_mode, model_name)`` call shape
+working while routing cloud backends through the unified interface.
+"""
 
-
-class BaseTranscriber(abc.ABC):
-    @abc.abstractmethod
-    def transcribe(self, audio_path: str, progress_callback=None) -> List[Dict[str, Any]]:
-        pass
-
-
-class MlxTranscriber(BaseTranscriber):
-    def __init__(self, model_name: str):
-        self.model_name = model_name
-
-    def transcribe(self, audio_path: str, progress_callback=None) -> List[Dict[str, Any]]:
-        try:
-            import mlx_whisper
-        except ImportError:
-            raise ImportError(
-                "mlx-whisper not installed. Please install it to use MLX backend."
-            )
-
-        # mlx_whisper.transcribe returns a dict with 'text' and 'segments'
-        # Using path_or_hf_repo parameter (API changed from 'model')
-        # Note: ui.notify cannot be called from background thread
-        result = mlx_whisper.transcribe(
-            audio_path,
-            initial_prompt="以下是简体中文句子。",
-            path_or_hf_repo=self.model_name,
-        )
-
-        segments = []
-        full_transcript = ""
-        for seg in result.get("segments", []):
-            segment_text = seg["text"].strip()
-            segments.append(
-                {"start": seg["start"], "end": seg["end"], "text": segment_text}
-            )
-            full_transcript += f"[{seg['start']:.2f}-{seg['end']:.2f}] {segment_text}\n"
-            if progress_callback:
-                progress_callback(full_transcript.strip())
-        return segments
-
-
-class FasterTranscriber(BaseTranscriber):
-    def __init__(self, model_name: str, device="cpu", compute_type="int8"):
-        self.device = device
-        self.compute_type = compute_type
-        self.model_name = model_name
-
-    def transcribe(self, audio_path: str, progress_callback=None) -> List[Dict[str, Any]]:
-        try:
-            from faster_whisper import WhisperModel
-        except ImportError:
-            raise ImportError("faster-whisper not installed.")
-
-        # Note: ui.notify cannot be called from background thread
-        print(f"[Transcriber] Loading Model (Device: {self.device})...")
-
-        model_path = model_manager.resolve_model_path(
-            self.model_name, "cuda" if self.device == "cuda" else "cpu"
-        )
-        model = WhisperModel(
-            model_path, device=self.device, compute_type=self.compute_type
-        )
-        print("[Transcriber] Model Loaded Successfully!")
-
-        segments_generator, info = model.transcribe(
-            audio_path, beam_size=5, initial_prompt="以下是简体中文句子。"
-        )
-
-        segments = []
-        full_transcript = ""
-        for segment in segments_generator:
-            segment_text = segment.text.strip()
-            segments.append(
-                {
-                    "start": segment.start,
-                    "end": segment.end,
-                    "text": segment_text,
-                }
-            )
-            full_transcript += f"[{segment.start:.2f}-{segment.end:.2f}] {segment_text}\n"
-            if progress_callback:
-                progress_callback(full_transcript.strip())
-        return segments
-
-
-class TranscriberFactory:
-    @staticmethod
-    def get_transcriber(backend: str, model_name: str) -> BaseTranscriber:
-        if backend == "mlx":
-            resolved_model = model_manager.resolve_model_path(model_name, "mlx")
-            return MlxTranscriber(model_name=resolved_model)
-        elif backend == "cpu":
-            resolved_model = model_manager.resolve_model_path(model_name, "cpu")
-            return FasterTranscriber(model_name=resolved_model, device="cpu")
-        elif backend == "cuda":
-            resolved_model = model_manager.resolve_model_path(model_name, "cuda")
-            return FasterTranscriber(
-                model_name=resolved_model, device="cuda", compute_type="float16"
-            )
-        else:
-            raise ValueError(f"Unknown backend: {backend}")
+from core.stt import (  # noqa: F401
+    BACKEND_IDS,
+    DEFAULT_STT_BACKEND,
+    BaseTranscriber,
+    DashScopeAuthError,
+    TranscriptionResult,
+    TranscriberFactory,
+)
+from core.stt_local import FasterTranscriber, MlxTranscriber  # noqa: F401

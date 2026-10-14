@@ -1,0 +1,15 @@
+# Default install: NiceGUI + download + Qwen3-ASR cloud STT (no local GPU stack).
+nicegui
+yt-dlp
+openai
+psutil
+opencv-python-headless
+requests
+huggingface_hub
+latex2mathml
+tiktoken
+
+# Optional local STT (not required for the default Qwen3-ASR cloud backend):
+#   macOS Apple Silicon:  pip install -r requirements_mac.txt
+#   Windows CPU:          pip install -r requirements_win_cpu.txt
+#   Windows CUDA:         pip install -r requirements_win_cuda.txt

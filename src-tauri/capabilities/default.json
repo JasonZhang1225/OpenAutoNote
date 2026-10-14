@@ -1,11 +1,18 @@
 {
     "identifier": "main-capability",
-    "description": "Capability for the main window",
+    "description": "Capability for the main and splash windows",
     "windows": [
-        "main"
+        "main",
+        "splashscreen"
     ],
     "permissions": [
         "core:default",
+        "core:window:allow-show",
+        "core:window:allow-hide",
+        "core:window:allow-close",
+        "core:window:allow-set-focus",
+        "core:window:allow-set-always-on-top",
+        "core:window:allow-set-decorations",
         "shell:default",
         "shell:allow-spawn",
         "shell:allow-execute",
