@@ -2299,8 +2299,15 @@ def index():
 
             history_list()
 
-        # Bottom Actions
-        with ui.column().classes("col-auto q-pa-sm w-full border-t border-gray-100"):
+        # Bottom Actions: new-note above settings so the FAB cannot cover Settings.
+        with ui.column().classes("col-auto q-pa-sm w-full border-t border-gray-100 gap-1"):
+            ui.button(
+                get_text("nav_new_note", state.config["ui_language"]),
+                icon="add",
+                on_click=lambda: new_note_handler(),
+            ).props(
+                "unelevated rounded block align=left color=primary w-full"
+            ).classes("rounded-full")
             ui.button(
                 get_text("nav_settings_title", state.config["ui_language"]),
                 icon="settings",
@@ -2308,30 +2315,6 @@ def index():
             ).props(
                 "flat rounded block align=left text-color-[#1C1B1F] w-full"
             ).classes("rounded-full hover:bg-[#E8DEF8]")
-
-        # Floating Action Button (FAB) for New Note
-        # We place it "fixed" absolute relative to drawer or main?
-        # User requested "prominent FAB".
-        # Let's put it inside the drawer at bottom right corner overlay? Or just top right of drawer list.
-        # Actually classic Material Design puts FAB in main area bottom right, or sidebar top.
-        # Let's put a nice button at the Top of Sidebar list actually, or overlay.
-        # Implementation: Fixed position button inside drawer creates issues with scrolling.
-        # Let's try placing it at the very top of drawer content as a "New Chat" primary action.
-        # Wait, user asked: "placed at the top or bottom right of the sidebar."
-        # Lets put it at the Top for clarity.
-        pass  # We'll insert it via layout above history list if we want, but FAB implies floating.
-        # Let's do a proper FAB in the Bottom Right of the Drawer?
-        # ui.button(icon='add').props('fab color=primary').classes('absolute-bottom-right q-ma-md')
-        # But this might overlap settings.
-        # Let's put it top-right of sidebar.
-
-    # FAB is better placed in the Drawer stack
-    with left_drawer:
-        ui.button(icon="add", on_click=lambda: new_note_handler()).props(
-            "fab color=primary"
-        ).classes("absolute-bottom-right q-ma-md shadow-lg z-10").tooltip(
-            get_text("nav_new_note", state.config["ui_language"])
-        )
 
     # --- Main Content Area ---
     main_container = ui.column().classes(
